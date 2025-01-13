@@ -280,43 +280,53 @@ void connect(const std::string &can_interface, int32_t bitrate) {
     write(id, data, 4);
 }
 
-void write_set_origin(uint8_t driver_id, bool is_permanent = false) {
-    uint32_t control_mode = 5;  // Set Origin Mode
-    uint32_t id = (control_mode << 8) | driver_id;
-    
-    uint8_t data[8] = {0};
-    data[0] = is_permanent ? 1 : 0;  // 0: temporary origin, 1: permanent origin
-    
-    write(id, data, 1);  // 1바이트 데이터 전송
-}
+    void write_set_origin(uint8_t driver_id, bool is_permanent = false) {
+        uint32_t control_mode = 5;  // Set Origin Mode
+        uint32_t id = (control_mode << 8) | driver_id;
+        
+        uint8_t data[8] = {0};
+        data[0] = is_permanent ? 1 : 0;  // 0: temporary origin, 1: permanent origin
+        
+        write(id, data, 1);  // 1바이트 데이터 전송
+    }
 
-void write_position_velocity(uint8_t driver_id, float position, float velocity, float acceleration) {
-    uint32_t control_mode = 6;  // Position-Velocity Loop Mode
-    uint32_t id = (control_mode << 8) | driver_id;
-    
-    uint8_t data[8] = {0};
-    int32_t pos = static_cast<int32_t>(position * 10000.0f);  // -36000 ~ 36000 범위로 변환
-    int16_t vel = static_cast<int16_t>(velocity);  // -32768 ~ 32767 RPM 범위
-    int16_t acc = static_cast<int16_t>(acceleration / 10.0f);  // 0 ~ 32767 범위 (1 unit = 10 RPM/s²)
-    
-    // 위치 데이터 (4바이트)
-    data[0] = (pos >> 24) & 0xFF;  // Position 25-32
-    data[1] = (pos >> 16) & 0xFF;  // Position 17-24
-    data[2] = (pos >> 8) & 0xFF;   // Position 9-16
-    data[3] = pos & 0xFF;          // Position 1-8
-    
-    // 속도 데이터 (2바이트)
-    data[4] = (vel >> 8) & 0xFF;   // Speed High Byte
-    data[5] = vel & 0xFF;          // Speed Low Byte
-    
-    // 가속도 데이터 (2바이트)
-    data[6] = (acc >> 8) & 0xFF;   // Acceleration High Byte
-    data[7] = acc & 0xFF;          // Acceleration Low Byte
-    
-    write(id, data, 8);
-}
-
-
+    void write_position_velocity(uint8_t driver_id, float position, float rpm, float acceleration) {
+        uint32_t control_mode = 6;  // Position-Velocity Loop Mode
+        uint32_t id = (control_mode << 8) | driver_id;
+        
+        uint8_t data[8] = {0};
+        int32_t pos = static_cast<int32_t>(position * 10000.0f);  // -36000 ~ 36000 범위로 변환
+        int16_t speed = static_cast<int16_t>(rpm);  // -32768 ~ 32767 RPM 범위
+        int16_t acc = static_cast<int16_t>(acceleration / 10.0f);  // 0 ~ 32767 범위 (1 unit = 10 RPM/s²)
+        
+        data[0] = (pos >> 24) & 0xFF;     // Position 25-32
+        data[1] = (pos >> 16) & 0xFF;     // Position 17-24
+        data[2] = (pos >> 8) & 0xFF;      // Position 9-16
+        data[3] = pos & 0xFF;             // Position 1-8
+        
+        data[4] = (speed >> 8) & 0xFF;    // Speed High Byte
+        data[5] = speed & 0xFF;           // Speed Low Byte
+        
+        data[6] = (acc >> 8) & 0xFF;      // Acceleration High Byte
+        data[7] = acc & 0xFF;             // Acceleration Low Byte
+        
+        write(id, data, 8);
+    }
+    void update_commands(uint8_t driver_id) {
+            if (!is_connected_) return;
+            
+            switch(control_mode_) {
+                case 3:  // Velocity Mode
+                    write_velocity(driver_id, current_speed_);
+                    break;
+                case 6:  // Position-Velocity Mode
+                    write_position_velocity(driver_id, 
+                        current_position_,
+                        current_speed_,
+                        current_acceleration_);
+                    break;
+            }
+    }
 
     // CAN 프레임 출력 유틸리티 함수
     static void printCanFrame(const struct can_frame& frame) {
@@ -337,7 +347,12 @@ void write_position_velocity(uint8_t driver_id, float position, float velocity, 
 private:
     int socket_fd_;
     bool is_connected_{false};	// 연결 상태를 is_connected_ 변수로 관리
+    float current_position_{0.0f};
+    float current_speed_{0.0f};
+    float current_acceleration_{0.0f};
+    uint8_t control_mode_{0};  // 3: velocity mode, 6: position-velocity mode
     static constexpr int TIMEOUT_MS = 1000;
+
 };
 
 #endif // MOTOR_CAN_COMMS_HPP
