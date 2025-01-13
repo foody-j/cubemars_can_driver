@@ -14,45 +14,84 @@ void signalHandler(int signum) {
     running = false;    // 프로그램 종료 플래그 설정
 }
 
-// CAN 프레임 출력 포맷팅 함수
-void printCanFrame(const can_frame& frame) {
-    // CAN ID를 16진수로 출력
-    std::cout << "  can0  " << std::setfill('0') << std::setw(8) << std::hex << frame.can_id;
-    
-    // 데이터 길이와 데이터 출력
-    std::cout << "   [" << std::dec << (int)frame.can_dlc << "]  ";
-    
-    // 데이터 바이트를 16진수로 출력
-    for(int i = 0; i < frame.can_dlc; i++) {
-        std::cout << std::setfill('0') << std::setw(2) << std::hex 
-                 << static_cast<int>(frame.data[i]) << " ";
+struct MotorData {
+    float position;    // -3200° ~ +3200°
+    float speed;       // -32000 ~ +32000 rpm
+    float current;     // -60A ~ +60A
+    int8_t temperature; // -20°C ~ 127°C
+    uint8_t error;     // 0~7 error codes
+};
+
+void parseMotorData(const can_frame& frame, MotorData& data) {
+    if (frame.can_dlc >= 8) {
+        // Position: Data[0-1], scale 0.1
+        int16_t pos_int = (frame.data[0] << 8) | frame.data[1];
+        data.position = static_cast<float>(pos_int) * 0.1f;
+        
+        // Speed: Data[2-3], scale 0.1
+        int16_t spd_int = (frame.data[2] << 8) | frame.data[3];
+        data.speed = static_cast<float>(spd_int) * 0.1f;
+        
+        // Current: Data[4-5], scale 0.01
+        int16_t cur_int = (frame.data[4] << 8) | frame.data[5];
+        data.current = static_cast<float>(cur_int) * 0.01f;
+        
+        // Temperature: Data[6], direct value
+        data.temperature = static_cast<int8_t>(frame.data[6]);
+        
+        // Error code: Data[7], direct value
+        data.error = frame.data[7];
     }
-    std::cout << std::dec << std::endl;
+}
+
+void printMotorData(const MotorData& data) {
+    std::cout << std::fixed << std::setprecision(1);
+    std::cout << "Position: " << data.position << "° "
+              << "Velocity: " << data.velocity << "RPM "
+              << "Current: " << data.current << "A "
+              << "Temp: " << static_cast<int>(data.temperature) << "°C "
+              << "Error: 0x" << std::hex << static_cast<int>(data.error) << std::dec
+              << std::endl;
 }
 
 int main() {
-    signal(SIGINT, signalHandler);  // Ctrl+C 핸들러 등록
+    signal(SIGINT, signalHandler);
     
     try {
-        CanComms can_driver;    // CAN 통신 객체 생성
-        
-        // CAN 연결 시작
+        CanComms can_driver;
         std::cout << "Connecting to CAN bus...\n";
-        can_driver.connect("can0", 1000000);  // 1Mbps 속도로 연결
+        can_driver.connect("can0", 1000000);
         std::cout << "Successfully connected to CAN bus\n";
         std::cout << "Monitoring CAN messages... (Press Ctrl+C to exit)\n\n";
         
-        // 메인 루프
-        while(running && can_driver.connected()) {  // 실행 중이고 연결 된 동안
+        struct can_frame frame;
+        MotorData motor_data;
+        
+        // 시간 측정을 위한 변수 추가
+        auto last_print_time = std::chrono::steady_clock::now();
+        const auto print_interval = std::chrono::milliseconds(100); // 100ms 간격으로 출력
+        
+        while(running && can_driver.connected()) {
             try {
-                int motor1_value = 0;
-                int motor2_value = 0;
-                can_driver.read_motor_values(motor1_value, motor2_value);   // CAN 데이터 읽기
-                
-                // 여기서는 값을 출력하지 않고, read_motor_values 내부에서
-                // printCanFrame을 통해 raw 데이터를 출력합니다.
-                
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                if (can_driver.readCanFrame(frame)) {
+                    auto current_time = std::chrono::steady_clock::now();
+                    
+                    // 마지막 출력 후 100ms가 지났는지 확인
+                    if (current_time - last_print_time >= print_interval) {
+                        // Raw 데이터 출력
+                        std::cout << "Raw: ";
+                        can_driver.printCanFrame(frame);
+                        
+                        // 모터 데이터 파싱 및 출력
+                        parseMotorData(frame, motor_data);
+                        std::cout << "Decoded: ";
+                        printMotorData(motor_data);
+                        std::cout << "------------------------" << std::endl;
+                        
+                        // 시간 업데이트
+                        last_print_time = current_time;
+                    }
+                }
             }
             catch(const std::exception& e) {
                 std::cerr << "Error reading CAN frame: " << e.what() << std::endl;
@@ -63,7 +102,6 @@ int main() {
         std::cout << "\nClosing CAN connection...\n";
         can_driver.disconnect();
         std::cout << "CAN connection closed.\n";
-        
     }
     catch(const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << std::endl;
