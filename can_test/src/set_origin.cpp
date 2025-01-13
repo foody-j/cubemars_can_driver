@@ -1,9 +1,11 @@
 // main.cpp
-#include "can_test/motor_can_driver_v3.hpp" //CAN 통신 클래스 정의된 헤더
+#include "can_test/motor_can_driver.hpp" //CAN 통신 클래스 정의된 헤더
 #include <thread>   // sleep_for 사용을 위한 헤더
 #include <chrono>   // 시간 관련 기능
 #include <signal.h> // SIGINT(Ctrl+C) 처리
 #include <iomanip>  //16진수 출력 포맷팅
+#include <termios.h>  // 키보드 입력을 위한 헤더 추가
+#include <fcntl.h>    // non-blocking 입력을 위한 헤더 추가
 
 // 프로그램 실행 상태 제어를 위한 전역 변수
 volatile bool running = true;   //volatile: 최적화 방지, 항상 메모리에서 값 읽음
@@ -12,6 +14,15 @@ volatile bool running = true;   //volatile: 최적화 방지, 항상 메모리�
 void signalHandler(int signum) {
     std::cout << "\nCaught signal " << signum << " (Ctrl+C). Terminating...\n";
     running = false;    // 프로그램 종료 플래그 설정
+}
+// 키보드 입력을 non-blocking으로 설정하는 함수
+void setNonBlockingInput() {
+    struct termios ttystate;
+    tcgetattr(STDIN_FILENO, &ttystate);
+    ttystate.c_lflag &= ~(ICANON | ECHO);
+    ttystate.c_cc[VMIN] = 0;
+    tcsetattr(STDIN_FILENO, TCSANOW, &ttystate);
+    fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
 }
 
 struct MotorData {
@@ -47,7 +58,7 @@ void parseMotorData(const can_frame& frame, MotorData& data) {
 void printMotorData(const MotorData& data) {
     std::cout << std::fixed << std::setprecision(1);
     std::cout << "Position: " << data.position << "° "
-              << "Velocity: " << data.velocity << "RPM "
+              << "Speed: " << data.speed << "RPM "
               << "Current: " << data.current << "A "
               << "Temp: " << static_cast<int>(data.temperature) << "°C "
               << "Error: 0x" << std::hex << static_cast<int>(data.error) << std::dec
@@ -62,21 +73,36 @@ int main() {
         std::cout << "Connecting to CAN bus...\n";
         can_driver.connect("can0", 1000000);
         std::cout << "Successfully connected to CAN bus\n";
-        std::cout << "Monitoring CAN messages... (Press Ctrl+C to exit)\n\n";
+        std::cout << "Monitoring CAN messages... (Press Ctrl+C to exit)\n";
+        std::cout << "Press 'o' to set origin for motors 1 and 2\n\n";
+        
+        setNonBlockingInput();  // non-blocking 키보드 입력 설정
         
         struct can_frame frame;
         MotorData motor_data;
-        
-        // 시간 측정을 위한 변수 추가
         auto last_print_time = std::chrono::steady_clock::now();
-        const auto print_interval = std::chrono::milliseconds(100); // 100ms 간격으로 출력
+        const auto print_interval = std::chrono::milliseconds(100);
         
         while(running && can_driver.connected()) {
             try {
+                // 키보드 입력 처리
+                char c;
+                if (read(STDIN_FILENO, &c, 1) > 0) {
+                    if (c == 'o' || c == 'O') {
+                        std::cout << "\nSetting origin for motors 1 and 2...\n";
+                        // 모터 1 원점 설정 (영구 저장)
+                        can_driver.write_set_origin(1, true);
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                        // 모터 2 원점 설정 (영구 저장)
+                        can_driver.write_set_origin(2, true);
+                        std::cout << "Origin set complete!\n";
+                    }
+                }
+
+                // CAN 프레임 읽기 및 처리
                 if (can_driver.readCanFrame(frame)) {
                     auto current_time = std::chrono::steady_clock::now();
                     
-                    // 마지막 출력 후 100ms가 지났는지 확인
                     if (current_time - last_print_time >= print_interval) {
                         // Raw 데이터 출력
                         std::cout << "Raw: ";
@@ -88,16 +114,21 @@ int main() {
                         printMotorData(motor_data);
                         std::cout << "------------------------" << std::endl;
                         
-                        // 시간 업데이트
                         last_print_time = current_time;
                     }
                 }
             }
             catch(const std::exception& e) {
-                std::cerr << "Error reading CAN frame: " << e.what() << std::endl;
+                std::cerr << "Error: " << e.what() << std::endl;
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
         }
+        
+        // 프로그램 종료 시 터미널 설정 복구
+        struct termios ttystate;
+        tcgetattr(STDIN_FILENO, &ttystate);
+        ttystate.c_lflag |= (ICANON | ECHO);
+        tcsetattr(STDIN_FILENO, TCSANOW, &ttystate);
         
         std::cout << "\nClosing CAN connection...\n";
         can_driver.disconnect();
