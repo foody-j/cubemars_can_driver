@@ -265,6 +265,7 @@ void connect(const std::string &can_interface, int32_t bitrate) {
     printCanFrame(frame);
 }
     void write_velocity(uint8_t driver_id, float rpm) {
+    control_mode_ = 3;  // Velocity Mode 설정
     uint32_t control_mode = 3;  // Velocity Mode
     uint32_t id = (control_mode << 8) | driver_id;
     
@@ -291,6 +292,7 @@ void connect(const std::string &can_interface, int32_t bitrate) {
     }
 
     void write_position_velocity(uint8_t driver_id, float position, float rpm, float acceleration) {
+        control_mode_ = 6;  // Position-Velocity Mode 설정
         uint32_t control_mode = 6;  // Position-Velocity Loop Mode
         uint32_t id = (control_mode << 8) | driver_id;
         
