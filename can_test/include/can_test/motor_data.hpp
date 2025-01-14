@@ -17,7 +17,7 @@ class MotorDataManager {
 public:
     static constexpr size_t MAX_MOTORS = 6;
     
-    MotorData& getMotorData(uint8_t motor_id) {
+    MotorData& getMotorData(uint8_t motor_id) { //
         if (motor_id < 1 || motor_id > MAX_MOTORS) {
             throw std::runtime_error("Invalid motor ID");
         }

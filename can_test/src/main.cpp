@@ -76,15 +76,26 @@ int main() {
         float target_rpm = 200.0f;  // 목표 속도
         bool motor_running = true;  // 모터 구동 상태 플래그
 
-        struct can_frame frame;
-        MotorData motor_data;
+        // struct can_frame frame;
+        // MotorData motor_data;
         auto last_print_time = std::chrono::steady_clock::now();
         const auto print_interval = std::chrono::milliseconds(100);
         // 초기 속도 설정
         can_driver.write_velocity(1, target_rpm);
 
+         // 원점 설정 먼저 실행
+        if (can_driver.initialize_motor_origin(1)) {
+            std::cout << "Origin initialization successful\n";
+            // 원점 설정 성공 후 속도 명령 전송
+            can_driver.write_velocity(1, target_rpm);
+        } else {
+            std::cerr << "Origin initialization failed\n";
+            return 1;  // 원점 설정 실패 시 프로그램 종료
+        }
+
         while(running && can_driver.connected()) {
             try {
+                auto current_time = std::chrono::steady_clock::now();
 
                 /*// 키보드 입력 처리
                 char c;
@@ -113,7 +124,7 @@ int main() {
                         running = false;  // 프로그램 종료 플래그 설정
                     }
                 }
-
+                /*
                 // 모터가 구동 중일 때만 속도 명령 갱신
                 if (motor_running) {
                     can_driver.write_velocity(1, target_rpm);
@@ -121,7 +132,8 @@ int main() {
 
                 // 100ms 대기
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
+                */
+               
                 /* 이 부분 다시 작성
                 // CAN 프레임 읽기 및 처리
                 if (can_driver.readCanFrame(frame)) {
@@ -142,7 +154,6 @@ int main() {
                     }
                 }*/
                 // CAN 프레임 읽기 및 처리
-                auto current_time = std::chrono::steady_clock::now();
                 if (current_time - last_print_time >= print_interval) {
                     try {
                         // read_motor_values 함수 호출로 모터 데이터 읽기
