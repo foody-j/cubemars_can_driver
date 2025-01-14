@@ -26,7 +26,7 @@ void setNonBlockingInput() {
     fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
 }
 
-
+/* read_motor_values() 함수 내부에서 이미 데이터를 파싱하고 있음
 void parseMotorData(const can_frame& frame, MotorData& data) {
     if (frame.can_dlc >= 8) {
         // Position: Data[0-1], scale 0.1
@@ -48,7 +48,7 @@ void parseMotorData(const can_frame& frame, MotorData& data) {
         data.error = frame.data[7];
     }
 }
-
+*/ 
 void printMotorData(const MotorData& data) {
     std::cout << std::fixed << std::setprecision(1);
     std::cout << "Position: " << data.position << "° "
@@ -122,6 +122,7 @@ int main() {
                 // 100ms 대기
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
+                /* 이 부분 다시 작성
                 // CAN 프레임 읽기 및 처리
                 if (can_driver.readCanFrame(frame)) {
                     auto current_time = std::chrono::steady_clock::now();
@@ -138,6 +139,21 @@ int main() {
                         std::cout << "------------------------" << std::endl;
                         
                         last_print_time = current_time;
+                    }
+                }*/
+                // CAN 프레임 읽기 및 처리
+                auto current_time = std::chrono::steady_clock::now();
+                if (current_time - last_print_time >= print_interval) {
+                    try {
+                        // read_motor_values 함수 호출로 모터 데이터 읽기
+                        int val_1 = 0, val_2 = 0;
+                        can_driver.read_motor_values(val_1, val_2);
+                        std::cout << "잘됨????????????????\n";
+                        // 다음 출력 시간 업데이트
+                        last_print_time = current_time;
+                    }
+                    catch(const std::exception& e) {
+                        std::cerr << "Error reading motor values: " << e.what() << std::endl;
                     }
                 }
             }
