@@ -15,12 +15,15 @@
 #include <iomanip>      // std::setw, std::setfill
 #include <cstdint>      // uint8_t 타입을 위해 추가
 #include <cstring>     // strcpy를 위해
-
-
+#include "motor_data.hpp"
+#include <chrono>
+#include <thread>
 class CanComms
 {
 public:
-    CanComms() : socket_fd_(-1), is_connected_(false) {} // 생성자에서 초기화
+    CanComms() : socket_fd_(-1), is_connected_(false) {
+        motor_manager_.reset();
+    } // 생성자에서 초기화
 
 void connect(const std::string &can_interface, int32_t bitrate) {
     try {
@@ -164,28 +167,29 @@ void connect(const std::string &can_interface, int32_t bitrate) {
                 // 데이터 길이 확인 (최소 7바이트)
                 if (frame.can_dlc >= 7) {
                     int motor_id = frame.can_id & 0xFF;
-                    if (motor_id >= 1 && motor_id <= 6) {
-                        int motor_index = motor_id - 1;
-                        
-                        // 위치, 속도, 전류, 온도, 에러 데이터 파싱
-                        float position = (static_cast<int16_t>((frame.data[0] << 8) | frame.data[1])) * 0.1f;
-                        float speed = (static_cast<int16_t>((frame.data[2] << 8) | frame.data[3])) * 10.0f;
-                        float current = (static_cast<int16_t>((frame.data[4] << 8) | frame.data[5])) * 0.01f;
-                        uint8_t temp = frame.data[6];
-                        uint8_t error = (frame.can_dlc > 7) ? frame.data[7] : 0;
+                    if (motor_id >= 1 && motor_id <= 6) {   // 1~6번까지 모터 ID 허용 
+                        MotorData data;                
+                        // 데이터 파싱
+                        data.position = (static_cast<int16_t>((frame.data[0] << 8) | frame.data[1])) * 0.1f;
+                        data.speed = (static_cast<int16_t>((frame.data[2] << 8) | frame.data[3])) * 10.0f;
+                        data.current = (static_cast<int16_t>((frame.data[4] << 8) | frame.data[5])) * 0.01f;
+                        data.temperature = static_cast<int8_t>(frame.data[6]);
+                        data.error = (frame.can_dlc > 7) ? frame.data[7] : 0;
+                        // 데이터 저장
+                        motor_manager_.updateMotorData(motor_id, data);
 
                         // 디버그 출력
                         std::cout << "Motor ID: " << motor_id 
-                                 << " | Position: " << position 
-                                 << " | Speed: " << speed 
-                                 << " | Current: " << current 
-                                 << " | Temp: " << temp 
-                                 << " | Error: " << static_cast<int>(error) 
+                                 << " | Position: " << data.position 
+                                 << " | Speed: " << data.speed 
+                                 << " | Current: " << data.current 
+                                 << " | Temp: " << data.temperature 
+                                 << " | Error: " << static_cast<int>(data.error) 
                                  << std::endl;
 
                         // val_1, val_2에 위치 값 저장 (예시)
-                        if (motor_id == 1) val_1 = static_cast<int>(position);
-                        else if (motor_id == 2) val_2 = static_cast<int>(position);
+                        if (motor_id == 1) val_1 = static_cast<int>(data.position);
+                        else if (motor_id == 2) val_2 = static_cast<int>(data.position);
                     } else {
                         std::cout << "Invalid Motor ID: " << motor_id << std::endl;
                     }
@@ -201,6 +205,10 @@ void connect(const std::string &can_interface, int32_t bitrate) {
     }
     }
 
+    // 모터 데이터 조회 함수 추가
+    MotorData getMotorData(uint8_t motor_id) {
+        return motor_manager_.getMotorData(motor_id);
+    }
 
     bool readCanFrame(struct can_frame& frame) {
         if (!is_connected_ || socket_fd_ < 0) {
@@ -263,7 +271,7 @@ void connect(const std::string &can_interface, int32_t bitrate) {
     // 디버그 출력
     std::cout << "Sent CAN frame: ";
     printCanFrame(frame);
-}
+    }
     void write_velocity(uint8_t driver_id, float rpm) {
     control_mode_ = 3;  // Velocity Mode 설정
     uint32_t control_mode = 3;  // Velocity Mode
@@ -279,7 +287,7 @@ void connect(const std::string &can_interface, int32_t bitrate) {
     data[3] = speed & 0xFF;          // Speed Bit 1-8
     
     write(id, data, 4);
-}
+    }
 
     void write_set_origin(uint8_t driver_id, bool is_permanent = false) {
         uint32_t control_mode = 5;  // Set Origin Mode
@@ -346,6 +354,68 @@ void connect(const std::string &can_interface, int32_t bitrate) {
         }
         std::cout << std::dec << std::endl;
     }
+    /*
+    bool initialize_motor_origin(uint8_t driver_id) {
+        if (!is_connected_) return false;
+        
+        try {
+            if (driver_id != 1 && driver_id != 2) {
+                std::cerr << "[ERROR] Invalid motor ID: " << driver_id << std::endl;
+                return false;
+            }
+
+            std::cout << "[INFO] Starting origin initialization for motor " << driver_id << std::endl;
+            
+            // 1. 원점 설정 모드 활성화 (임시 설정)
+            write_set_origin(driver_id, false);
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            
+            // 2. 저속으로 원점 방향으로 이동 (-100 RPM)
+            write_velocity(driver_id, -100.0f);
+            
+            // 3. 원점 감지 대기 (전류값 모니터링)
+            auto start_time = std::chrono::steady_clock::now();
+            const auto timeout = std::chrono::seconds(20);
+            
+            struct can_frame frame;
+            MotorData motor_data;
+            
+            while (std::chrono::steady_clock::now() - start_time < timeout) {
+                if (readCanFrame(frame)) {
+                    parseMotorData(frame, motor_data);
+                    
+                    // 전류 임계값(1.0A) 체크
+                    if (motor_data.current > 1.0f) {
+                        std::cout << "[INFO] Origin detected for motor " << driver_id 
+                                << ", Current: " << motor_data.current << std::endl;
+                        
+                        // 모터 정지
+                        write_velocity(driver_id, 0.0f);
+                        
+                        // 원점 위치 저장 (영구 저장)
+                        write_set_origin(driver_id, true);
+                        
+                        // 위치-속도 모드로 전환하여 0도 위치로 이동
+                        write_position_velocity(driver_id, 0.0f, 50.0f, 50.0f);
+                        
+                        return true;
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            
+            std::cerr << "[ERROR] Origin initialization timeout for motor " << driver_id << std::endl;
+            // 타임아웃 시 모터 정지
+            write_velocity(driver_id, 0.0f);
+            return false;
+            
+        } catch (const std::exception& e) {
+            std::cerr << "[ERROR] Origin initialization failed for motor " << driver_id 
+                    << ": " << e.what() << std::endl;
+            write_velocity(driver_id, 0.0f);  // 예외 발생 시 모터 정지
+            return false;
+        }
+    }*/
 private:
     int socket_fd_;
     bool is_connected_{false};	// 연결 상태를 is_connected_ 변수로 관리
@@ -354,6 +424,7 @@ private:
     float current_acceleration_{0.0f};
     uint8_t control_mode_{0};  // 3: velocity mode, 6: position-velocity mode
     static constexpr int TIMEOUT_MS = 1000;
+    MotorDataManager motor_manager_;  // 멤버 변수로 추가
 
 };
 

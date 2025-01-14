@@ -1,5 +1,6 @@
 // main.cpp
 #include "can_test/motor_can_driver.hpp" //CAN 통신 클래스 정의된 헤더
+#include "can_test/motor_data.hpp"
 #include <thread>   // sleep_for 사용을 위한 헤더
 #include <chrono>   // 시간 관련 기능
 #include <signal.h> // SIGINT(Ctrl+C) 처리
@@ -25,13 +26,6 @@ void setNonBlockingInput() {
     fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
 }
 
-struct MotorData {
-    float position;    // -3200° ~ +3200°
-    float speed;       // -32000 ~ +32000 rpm
-    float current;     // -60A ~ +60A
-    int8_t temperature; // -20°C ~ 127°C
-    uint8_t error;     // 0~7 error codes
-};
 
 void parseMotorData(const can_frame& frame, MotorData& data) {
     if (frame.can_dlc >= 8) {
