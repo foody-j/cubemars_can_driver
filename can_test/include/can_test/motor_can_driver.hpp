@@ -130,148 +130,91 @@ void connect(const std::string &can_interface, int32_t bitrate) {
     return (ret >= 0) && is_connected_;
     }
 
-    void read_motor_values(int &val_1, int &val_2)
-    {
-    // 1. 소켓 상태 확인
-    if (socket_fd_ < 0) {
-        throw std::runtime_error("CAN socket not initialized");
-    }
-
-    // 2. 연결 상태 확인
-    if (!is_connected_) {
-        throw std::runtime_error("CAN interface not connected");
-    }
-    
-    struct can_frame frame;
-    struct timeval timeout;
-    timeout.tv_sec = 0;   // 1초
-    timeout.tv_usec = 100000;  // 100ms
-
-    fd_set read_set;
-    FD_ZERO(&read_set);
-    FD_SET(socket_fd_, &read_set);
-    
-    try {
-        if (select(socket_fd_ + 1, &read_set, NULL, NULL, &timeout) > 0) {
-            if (read(socket_fd_, &frame, sizeof(struct can_frame)) > 0) {
-                // CAN 메시지 수신 확인
-                std::cout << "Received message: ID=0x" << std::hex << frame.can_id 
-                         << ", Data=[";
-                for (int i = 0; i < frame.can_dlc; i++) {
-                    std::cout << std::hex << std::setw(2) << std::setfill('0')
-                             << static_cast<int>(frame.data[i]);
-                    if (i < frame.can_dlc - 1) std::cout << " ";
-                }
-                std::cout << "]" << std::dec << std::endl;
-
-                // 데이터 길이 확인 (최소 7바이트)
-                if (frame.can_dlc >= 7) {
-                    int motor_id = frame.can_id & 0xFF;
-                    if (motor_id >= 1 && motor_id <= 6) {   // 1~6번까지 모터 ID 허용 
-                        MotorData data;                
-                        // 데이터 파싱
-                        data.position = (static_cast<int16_t>((frame.data[0] << 8) | frame.data[1])) * 0.1f;
-                        data.speed = (static_cast<int16_t>((frame.data[2] << 8) | frame.data[3])) * 10.0f;
-                        data.current = (static_cast<int16_t>((frame.data[4] << 8) | frame.data[5])) * 0.01f;
-                        data.temperature = static_cast<int8_t>(frame.data[6]);
-                        data.error = (frame.can_dlc > 7) ? frame.data[7] : 0;
-                        // 데이터 저장
-                        motor_manager_.updateMotorData(motor_id, data);
-
-                        // 디버그 출력
-                        std::cout << "Motor ID: " << motor_id 
-                                 << " | Position: " << data.position 
-                                 << " | Speed: " << data.speed 
-                                 << " | Current: " << data.current 
-                                 << " | Temp: " << data.temperature 
-                                 << " | Error: " << static_cast<int>(data.error) 
-                                 << std::endl;
-
-                        // val_1, val_2에 위치 값 저장 (예시)
-                        if (motor_id == 1) val_1 = static_cast<int>(data.position);
-                        else if (motor_id == 2) val_2 = static_cast<int>(data.position);
-                    } else {
-                        std::cout << "Invalid Motor ID: " << motor_id << std::endl;
-                    }
-                } else {
-                    std::cout << "Received message with insufficient data length." << std::endl;
-                }
-            }
-        } else {
-            std::cout << "No CAN message received." << std::endl;
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "CAN read error: " << e.what() << std::endl;
-    }
-    }
-
-    // 모터 데이터 조회 함수 추가
-    MotorData getMotorData(uint8_t motor_id) {
-        return motor_manager_.getMotorData(motor_id);
-    }
-
     bool readCanFrame(struct can_frame& frame) {
+        // CAN 연결 상태 확인: 연결되지 않았거나 소켓이 유효하지 않으면 예외 발생
         if (!is_connected_ || socket_fd_ < 0) {
             throw std::runtime_error("CAN is not connected");
         }
 
+        // fd_set: 파일 디스크립터 집합을 나타내는 구조체 선언
         fd_set rdfs;
-        struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 100000; // 100ms timeout
+        // timeval: select 함수의 타임아웃 설정 (0초, 100000마이크로초 = 0.1초)
+        struct timeval tv{0, 100000};
 
+        // rdfs 집합을 초기화 (모든 비트를 0으로 설정)
         FD_ZERO(&rdfs);
+        // socket_fd_를 rdfs 집합에 추가 (감시할 파일 디스크립터 설정)
         FD_SET(socket_fd_, &rdfs);
 
-        // 데이터 수신 대기
-        int ret = select(socket_fd_ + 1, &rdfs, NULL, NULL, &tv);
-        if (ret < 0) {
-            throw std::runtime_error("Select error");
-        }
-        if (ret == 0) {
-            return false; // timeout
+        // select로 소켓 읽기 가능 여부 확인
+        // socket_fd_ + 1: 감시할 파일 디스크립터의 최대값 + 1
+        // &rdfs: 읽기 가능한 디스크립터 집합
+        // nullptr: 쓰기/예외 상황은 감시하지 않음
+        // &tv: 타임아웃 설정
+        if (select(socket_fd_ + 1, &rdfs, nullptr, nullptr, &tv) <= 0) {
+            return false;  // 타임아웃이나 에러 발생 시 false 반환
         }
 
         // CAN 프레임 읽기
-        ssize_t nbytes = read(socket_fd_, &frame, sizeof(struct can_frame));
-        if (nbytes < 0) {
-            throw std::runtime_error("Read error");
-        }
-        if (nbytes < sizeof(struct can_frame)) {
-            throw std::runtime_error("Incomplete CAN frame");
+        // read: 소켓에서 데이터를 읽어 frame에 저장
+        // sizeof(struct can_frame): CAN 프레임 크기만큼 읽기
+        if (read(socket_fd_, &frame, sizeof(struct can_frame)) != sizeof(struct can_frame)) {
+            throw std::runtime_error("Read error");  // 읽기 실패 시 예외 발생
         }
 
-        return true;
+        return true;  // 성공적으로 프레임을 읽었을 경우 true 반환
     }
 
     void write(uint32_t id, const uint8_t* data, uint8_t len) {
-    if (!is_connected_ || socket_fd_ < 0) {
-        throw std::runtime_error("CAN is not connected");
+        // CAN 데이터의 최대 길이를 8바이트로 상수 정의
+        static constexpr uint8_t MAX_CAN_DATA_LENGTH = 8;
+        
+        // CAN 연결 상태 확인
+        // is_connected_가 false이거나 socket_fd_가 0미만이면 에러
+        if (!is_connected_ || socket_fd_ < 0) {
+            throw std::system_error(ENOTCONN, std::generic_category(), "CAN is not connected");
+        }
+
+        // CAN 프레임 구조체를 생성하고 모든 멤버를 0으로 초기화
+        struct can_frame frame = {};  
+
+        // CAN ID 설정: 입력받은 ID에 확장 프레임 플래그(CAN_EFF_FLAG) 추가
+        frame.can_id = id | CAN_EFF_FLAG;
+
+        // 데이터 길이 설정: 입력 길이와 최대 길이(8) 중 작은 값 선택
+        frame.can_dlc = std::min(len, MAX_CAN_DATA_LENGTH);
+        
+        // 데이터 포인터가 유효한 경우에만 데이터 복사
+        if (data != nullptr) {
+            // data에서 frame.data로 frame.can_dlc만큼의 바이트를 복사
+            std::copy_n(data, frame.can_dlc, frame.data);
+        }
+
+        // CAN 프레임을 소켓을 통해 전송
+        ssize_t nbytes = ::write(socket_fd_, &frame, sizeof(struct can_frame));
+
+        // 전송 중 에러 발생 시 (반환값이 음수)
+        if (nbytes < 0) {
+            throw std::system_error(errno, std::generic_category(), "Write failed");
+        } 
+        // 전송된 바이트 수가 CAN 프레임 크기와 다른 경우
+        else if (nbytes != sizeof(struct can_frame)) {
+            throw std::runtime_error("Incomplete CAN frame write");
+        }
+
+        // DEBUG_CAN이 정의된 경우에만 실행되는 디버그 출력 코드
+        #ifdef DEBUG_CAN
+        std::cout << "Sent CAN frame: ";
+        printCanFrame(frame);
+        #endif
     }
 
-    // CAN 프레임 준비
-    struct can_frame frame;
-    memset(&frame, 0, sizeof(frame));  // 프레임 초기화
-
-    // CAN ID 설정 (Extended frame format 사용)
-    frame.can_id = id | CAN_EFF_FLAG;  // Extended frame format flag 설정
-    
-    // 데이터 길이 설정 (최대 8바이트)
-    frame.can_dlc = (len > 8) ? 8 : len;
-    
-    // 데이터 복사
-    memcpy(frame.data, data, frame.can_dlc);
-
-    // CAN 프레임 전송
-    ssize_t nbytes = ::write(socket_fd_, &frame, sizeof(struct can_frame));
-    if (nbytes != sizeof(struct can_frame)) {
-        throw std::runtime_error("Failed to write CAN frame");
-    }
 
     // 디버그 출력
     std::cout << "Sent CAN frame: ";
     printCanFrame(frame);
     }
+
     void write_velocity(uint8_t driver_id, float rpm) {
     control_mode_ = 3;  // Velocity Mode 설정
     uint32_t control_mode = 3;  // Velocity Mode
@@ -322,6 +265,7 @@ void connect(const std::string &can_interface, int32_t bitrate) {
         
         write(id, data, 8);
     }
+
     void update_commands(uint8_t driver_id) {
             if (!is_connected_) return;
             
@@ -336,6 +280,11 @@ void connect(const std::string &can_interface, int32_t bitrate) {
                         current_acceleration_);
                     break;
             }
+    }
+
+    // 모터 데이터 조회 함수 추가
+    MotorData getMotorData(uint8_t motor_id) {
+        return motor_manager_.getMotorData(motor_id);
     }
 
     // CAN 프레임 출력 유틸리티 함수
