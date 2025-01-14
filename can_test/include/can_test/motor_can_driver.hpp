@@ -30,14 +30,12 @@ public:
         socket_fd_(-1),
         is_connected_(false),
         control_mode_(0),
-        current_speed_(0.0f),
-        current_position_(0.0f),
-        current_acceleration_(0.0f),
-        running_(true)  // 스레드 실행 플래그 활성화
+        running_(false),  // 스레드 실행 플래그 활성화
+        read_running_(false)    // 초기에는 false로 설정   
+
     {
         motor_manager_.reset();
         // 명령 전송 스레드 시작
-        command_thread_ = std::thread(&CanComms::command_loop, this);
     } // 생성자에서 초기화
 
 
@@ -45,12 +43,14 @@ public:
      ~CanComms() {
         // 스레드 종료 플래그 설정
         running_ = false;
-
+        read_running_ = false;
         // 스레드가 실행 중이면 종료 대기
         if (command_thread_.joinable()) {
             command_thread_.join();
         }
-
+        if (read_thread_.joinable()) {
+            read_thread_.join();
+        }
         // 연결된 상태라면 연결 해제
         if (is_connected_) {
             try {
@@ -117,6 +117,11 @@ void connect(const std::string &can_interface, int32_t bitrate) {
         }
 
         is_connected_ = true;
+        // CAN 연결이 성공한 후에 스레드 시작
+        running_ = true;
+        read_running_ = true;
+        command_thread_ = std::thread(&CanComms::command_loop, this);
+        read_thread_ = std::thread(&CanComms::read_loop, this);
         std::cout << "Successfully connected to " << can_interface << " with bitrate " << bitrate << std::endl;
     }
     catch(const std::exception& e) {
@@ -305,7 +310,7 @@ void connect(const std::string &can_interface, int32_t bitrate) {
         static constexpr uint8_t MIN_MOTOR_ID = 1;  // 최소 모터 ID
         static constexpr uint8_t MAX_MOTOR_ID = 6;  // 최대 모터 ID 
         static constexpr float ORIGIN_SEARCH_SPEED = -100.0f;   // 원점 탐색 속도
-        static constexpr float CURRENT_THRESHOLD = 0.5f;    // 전류 감지 임계값
+        static constexpr float CURRENT_THRESHOLD = 1.0f;    // 전류 감지 임계값
         static constexpr auto TIMEOUT_DURATION = std::chrono::seconds(20);  //최대 대기 시간
         static constexpr auto POLLING_INTERVAL = std::chrono::milliseconds(100);    // 상태 확인 주기
         static constexpr auto COMMAND_DELAY = std::chrono::milliseconds(500);   // 명령 사이 지연 시간
@@ -352,34 +357,39 @@ void connect(const std::string &can_interface, int32_t bitrate) {
 
             // 2. 원점 탐색 시작
             write_velocity(driver_id, ORIGIN_SEARCH_SPEED);
-
+            std::cout << "원점 탐색 시작\n";
             // 3. 원점 감지 대기
             auto start_time = std::chrono::steady_clock::now();
             struct can_frame frame;
+            std::cout << "원점 감지 대기\n";
 
             while (std::chrono::steady_clock::now() - start_time < TIMEOUT_DURATION) {
-                // 주기적으로 명령 전송
                 write_velocity(driver_id, ORIGIN_SEARCH_SPEED);
-                if (readCanFrame(frame)) {
-                    // 여기서 프레임에서 직접 전류값 추출
-                    // 예: 전류값이 frame.data[4-5]에 있다고 가정
-                    int16_t current_raw = (frame.data[4] << 8) | frame.data[5];
-                float current = current_raw * 0.01f;  // Scale factor 적용
+    
+                // 저장된 모터 데이터 확인
+                MotorData motor_data = motor_manager_.getMotorData(driver_id);
+                float current = motor_data.current;
+                float position = motor_data.position;
+                
+                std::cout << "Motor " << driver_id 
+                        << " 위치 값: " << position
+                        << " 전류 값: " << current << "A\n";
 
-                if (current > CURRENT_THRESHOLD) {
-                    std::cout << "Origin detected for motor " << driver_id 
-                             << ", Current: " << current << "A\n";
+                        if (current > CURRENT_THRESHOLD) {
+                            std::cout << "Origin detected for motor " << driver_id 
+                                    << ", Current: " << current << "A\n";
 
-                    write_velocity(driver_id, 0.0f);
-                    write_set_origin(driver_id, true);
-                    write_position_velocity(driver_id, 0.0f, 50.0f, 50.0f);
+                            write_velocity(driver_id, 0.0f);
+                            write_set_origin(driver_id, true);
+                            write_position_velocity(driver_id, 0.0f, 50.0f, 50.0f);
 
-                    guard.release();
-                    return true;
-                }
+                            guard.release();
+                            return true;
+                        }
+                    
+                
+                std::this_thread::sleep_for(POLLING_INTERVAL);
             }
-            std::this_thread::sleep_for(POLLING_INTERVAL);
-        }
 
         std::cout << "Origin initialization timeout for motor " << driver_id << "\n";
         return false;
@@ -395,15 +405,13 @@ private:
     bool is_connected_;
     MotorDataManager motor_manager_;
     int control_mode_;
-    float current_speed_;
-    float current_position_;
-    float current_acceleration_;
     std::thread command_thread_;        // 명령 전송용 스레드
     std::atomic<bool> running_{false};  // 스레드 실행 제어
     std::mutex command_mutex_;          // 명령 데이터 보호
     can_frame current_command_;         // 현재 전송할 명령
     bool has_command_{false};           // 명령 존재 여부
-
+    std::thread read_thread_;          // 읽기 전용 스레드
+    std::atomic<bool> read_running_{false};  // 읽기 스레드 제어
     // 추가할 private 멤버 함수
     void command_loop() {
         while (running_) {
@@ -417,7 +425,38 @@ private:
         }
     }
 
-
+    // 읽기 스레드 함수
+    void read_loop() {
+        while (read_running_) {
+            struct can_frame frame;
+            if (readCanFrame(frame)) {
+                uint8_t resp_id = frame.can_id & 0xFF;
+                if (resp_id >= 1 && resp_id <= MotorDataManager::MAX_MOTORS) {
+                    MotorData data;
+                    
+                    // 위치 데이터 추출 (data[0-1])
+                    int16_t position_raw = (frame.data[0] << 8) | frame.data[1];
+                    data.position = position_raw * 0.1f;  // Scale factor 적용
+                    // 속도 데이터 추출 (data[6-7])
+                    int16_t speed_raw = (frame.data[2] << 8) | frame.data[3];
+                    data.speed = speed_raw * 10.0f;  // RPM 값 저장
+                    // 전류 데이터 추출 (data[4-5])
+                    int16_t current_raw = (frame.data[4] << 8) | frame.data[5];
+                    data.current = current_raw * 0.01f;  // Scale factor 적용
+                    int8_t temperature = frame.data[6];
+                    data.temperature = temperature;
+                    int8_t error = frame.data[7];
+                    data.error = error;
+                
+                    
+                    
+                    // 모터 매니저 업데이트
+                    motor_manager_.updateMotorData(resp_id, data);
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
 };
 
 

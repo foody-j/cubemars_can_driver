@@ -65,7 +65,18 @@ int main() {
         // CAN 드라이버 초기화 및 연결
         CanComms can_driver;
         std::cout << "Connecting to CAN bus...\n";
+        
+        // connect 함수 호출 전 딜레이 추가
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        
         can_driver.connect("can0", 1000000);  // 1Mbps 속도로 연결
+        
+        // 연결 상태 확인
+        if (!can_driver.connected()) {
+            std::cerr << "Failed to connect to CAN bus\n";
+            return 1;
+        }
+        
         std::cout << "Successfully connected to CAN bus\n";
         
         can_driver.initialize_motor_origin(1);
