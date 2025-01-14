@@ -86,7 +86,20 @@ int main() {
             // CAN 프레임 읽기 및 처리
             struct can_frame frame;
             if (can_driver.readCanFrame(frame)) {
-                can_driver.printCanFrame(frame);
+                // 모터 ID 확인 (하위 8비트)
+                uint8_t motor_id = frame.can_id & 0xFF;
+                
+                // 해당 모터의 데이터 가져오기
+                MotorData motor_data = can_driver.getMotorData(motor_id);
+                
+                // 모터 데이터 출력
+                std::cout << "Motor " << (int)motor_id << ": "
+                            << "Position: " << motor_data.position << "° "
+                            << "Speed: " << motor_data.speed << " RPM "
+                            << "Current: " << motor_data.current << "A "
+                            << "Temperature: " << (int)motor_data.temperature << "°C "
+                            << "Error: 0x" << std::hex << (int)motor_data.error 
+                            << std::dec << std::endl;
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
