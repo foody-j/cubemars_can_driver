@@ -18,12 +18,53 @@
 #include "motor_data.hpp"
 #include <chrono>
 #include <thread>
+#include <functional> // std::function 사용을 위해 필요
+#include <iostream>  // std::cout 사용을 위해 필요
+#include <atomic>
+#include <mutex>
+
 class CanComms
 {
 public:
-    CanComms() : socket_fd_(-1), is_connected_(false) {
+    CanComms() :
+        socket_fd_(-1),
+        is_connected_(false),
+        control_mode_(0),
+        current_speed_(0.0f),
+        current_position_(0.0f),
+        current_acceleration_(0.0f),
+        running_(true)  // 스레드 실행 플래그 활성화
+    {
         motor_manager_.reset();
+        // 명령 전송 스레드 시작
+        command_thread_ = std::thread(&CanComms::command_loop, this);
     } // 생성자에서 초기화
+
+
+    // 소멸자 추가
+     ~CanComms() {
+        // 스레드 종료 플래그 설정
+        running_ = false;
+
+        // 스레드가 실행 중이면 종료 대기
+        if (command_thread_.joinable()) {
+            command_thread_.join();
+        }
+
+        // 연결된 상태라면 연결 해제
+        if (is_connected_) {
+            try {
+                disconnect();
+            } catch (const std::exception& e) {
+                std::cerr << "Error during disconnect in destructor: " 
+                         << e.what() << std::endl;
+            }
+        }
+     }
+        // 복사 생성자와 대입 연산자 삭제 (소켓과 스레드는 복사될 수 없음)
+        CanComms(const CanComms&) = delete;
+        CanComms& operator=(const CanComms&) = delete;
+
 
 void connect(const std::string &can_interface, int32_t bitrate) {
     try {
@@ -166,53 +207,22 @@ void connect(const std::string &can_interface, int32_t bitrate) {
     }
 
     void write(uint32_t id, const uint8_t* data, uint8_t len) {
-        // CAN 데이터의 최대 길이를 8바이트로 상수 정의
-        static constexpr uint8_t MAX_CAN_DATA_LENGTH = 8;
-        
-        // CAN 연결 상태 확인
-        // is_connected_가 false이거나 socket_fd_가 0미만이면 에러
-        if (!is_connected_ || socket_fd_ < 0) {
-            throw std::system_error(ENOTCONN, std::generic_category(), "CAN is not connected");
-        }
-
-        // CAN 프레임 구조체를 생성하고 모든 멤버를 0으로 초기화
-        struct can_frame frame = {};  
-
-        // CAN ID 설정: 입력받은 ID에 확장 프레임 플래그(CAN_EFF_FLAG) 추가
-        frame.can_id = id | CAN_EFF_FLAG;
-
-        // 데이터 길이 설정: 입력 길이와 최대 길이(8) 중 작은 값 선택
-        frame.can_dlc = std::min(len, MAX_CAN_DATA_LENGTH);
-        
-        // 데이터 포인터가 유효한 경우에만 데이터 복사
-        if (data != nullptr) {
-            // data에서 frame.data로 frame.can_dlc만큼의 바이트를 복사
-            std::copy_n(data, frame.can_dlc, frame.data);
-        }
-
-        // CAN 프레임을 소켓을 통해 전송
-        ssize_t nbytes = ::write(socket_fd_, &frame, sizeof(struct can_frame));
-
-        // 전송 중 에러 발생 시 (반환값이 음수)
-        if (nbytes < 0) {
-            throw std::system_error(errno, std::generic_category(), "Write failed");
-        } 
-        // 전송된 바이트 수가 CAN 프레임 크기와 다른 경우
-        else if (nbytes != sizeof(struct can_frame)) {
-            throw std::runtime_error("Incomplete CAN frame write");
-        }
-
-        // DEBUG_CAN이 정의된 경우에만 실행되는 디버그 출력 코드
-        #ifdef DEBUG_CAN
-        std::cout << "Sent CAN frame: ";
-        printCanFrame(frame);
-        #endif
+    static constexpr uint8_t MAX_CAN_DATA_LENGTH = 8;
+    
+    if (!is_connected_ || socket_fd_ < 0) {
+        throw std::system_error(ENOTCONN, std::generic_category(), "CAN is not connected");
     }
 
-
-    // 디버그 출력
-    std::cout << "Sent CAN frame: ";
-    printCanFrame(frame);
+    std::lock_guard<std::mutex> lock(command_mutex_);
+    current_command_ = {};
+    current_command_.can_id = id | CAN_EFF_FLAG;
+    current_command_.can_dlc = std::min(len, MAX_CAN_DATA_LENGTH);
+    
+    if (data != nullptr) {
+        std::copy_n(data, current_command_.can_dlc, current_command_.data);
+    }
+    
+    has_command_ = true;
     }
 
     void write_velocity(uint8_t driver_id, float rpm) {
@@ -265,28 +275,14 @@ void connect(const std::string &can_interface, int32_t bitrate) {
         
         write(id, data, 8);
     }
-
-    void update_commands(uint8_t driver_id) {
-            if (!is_connected_) return;
-            
-            switch(control_mode_) {
-                case 3:  // Velocity Mode
-                    write_velocity(driver_id, current_speed_);
-                    break;
-                case 6:  // Position-Velocity Mode
-                    write_position_velocity(driver_id, 
-                        current_position_,
-                        current_speed_,
-                        current_acceleration_);
-                    break;
-            }
-    }
-
     // 모터 데이터 조회 함수 추가
     MotorData getMotorData(uint8_t motor_id) {
         return motor_manager_.getMotorData(motor_id);
     }
-
+    // motor_manager에 대한 getter 함수
+    MotorDataManager& getMotorManager() {
+        return motor_manager_;
+    }
     // CAN 프레임 출력 유틸리티 함수
     static void printCanFrame(const struct can_frame& frame) {
         // CAN ID 출력 (16진수)
@@ -305,78 +301,124 @@ void connect(const std::string &can_interface, int32_t bitrate) {
     }
 
     bool initialize_motor_origin(uint8_t driver_id) {
-        if (!is_connected_) return false;
+        // 상수 정의 부분 
+        static constexpr uint8_t MIN_MOTOR_ID = 1;  // 최소 모터 ID
+        static constexpr uint8_t MAX_MOTOR_ID = 6;  // 최대 모터 ID 
+        static constexpr float ORIGIN_SEARCH_SPEED = -100.0f;   // 원점 탐색 속도
+        static constexpr float CURRENT_THRESHOLD = 0.5f;    // 전류 감지 임계값
+        static constexpr auto TIMEOUT_DURATION = std::chrono::seconds(20);  //최대 대기 시간
+        static constexpr auto POLLING_INTERVAL = std::chrono::milliseconds(100);    // 상태 확인 주기
+        static constexpr auto COMMAND_DELAY = std::chrono::milliseconds(500);   // 명령 사이 지연 시간
         
-        try {
-            if (driver_id < 1 || driver_id > 6) {   // 모터 ID 범위 확장 (1~6)
-                std::cerr << "[ERROR] Invalid motor ID: " << driver_id << std::endl;
-                return false;
-            }
-
-            std::cout << "[INFO] Starting origin initialization for motor " << driver_id << std::endl;
-            
-            // 1. 원점 설정 모드 활성화 (임시 설정)
-            write_set_origin(driver_id, false);
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            
-            // 2. 저속으로 원점 방향으로 이동 (-100 RPM)
-            write_velocity(driver_id, -100.0f);
-            
-            // 3. 원점 감지 대기 (전류값 모니터링)
-            auto start_time = std::chrono::steady_clock::now();
-            const auto timeout = std::chrono::seconds(20);
-            
-            struct can_frame frame;
-            
-            int val_1 = 0, val_2 = 0;  // read_motor_values 호출을 위한 임시 변수
-
-            while (std::chrono::steady_clock::now() - start_time < timeout) {
-            read_motor_values(val_1, val_2);  // 모터 데이터 읽기
-            
-            // motor_data_manager에서 현재 모터의 데이터 가져오기
-            MotorData motor_data = motor_manager_.getMotorData(driver_id);
-            
-            // 전류 임계값(1.0A) 체크
-            if (motor_data.current > 1.0f) {
-                std::cout << "[INFO] Origin detected for motor " << driver_id 
-                         << ", Current: " << motor_data.current << std::endl;
-                
-                // 모터 정지
-                write_velocity(driver_id, 0.0f);
-                
-                // 원점 위치 저장 (영구 저장)
-                write_set_origin(driver_id, true);
-                
-                // 위치-속도 모드로 전환하여 0도 위치로 이동
-                write_position_velocity(driver_id, 0.0f, 50.0f, 50.0f);
-                
-                return true;
-            }
-            
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
+        // 안전한 리소스 정리를 위한 RAII 클래스
+        class ScopeGuard {
+        public:
+            // 정리 함수를 받는 생성자
+            ScopeGuard(std::function<void()> cleanup) : cleanup_(cleanup) {}
+            // 소멸자에서 정리 함수 실행
+            ~ScopeGuard() { if (cleanup_) cleanup_(); }
+            // 정리 함수 해제 (정상 종료 시)
+            void release() { cleanup_ = nullptr; }
+        private:
+            std::function<void()> cleanup_;
+        };
         
-            std::cerr << "[ERROR] Origin initialization timeout for motor " << driver_id << std::endl;
-            write_velocity(driver_id, 0.0f);  // 타임아웃 시 모터 정지
-            return false;
-            
-        } catch (const std::exception& e) {
-            std::cerr << "[ERROR] Origin initialization failed for motor " << driver_id 
-                    << ": " << e.what() << std::endl;
-            write_velocity(driver_id, 0.0f);  // 예외 발생 시 모터 정지
+        // CAN 연결 상태 확인
+        if (!is_connected_) {
+            std::cout << "CAN is not connected\n";
             return false;
         }
-    }  
+
+        // 모터 ID 유효성 검사
+        if (driver_id < MIN_MOTOR_ID || driver_id > MAX_MOTOR_ID) {
+            std::cout << "Error: Invalid motor ID: " << driver_id << "\n";
+            return false;
+        }
+
+        std::cout << "Starting origin initialization for motor " << driver_id << "\n";
+        // 안전을 위한 cleanup guard 설정
+        ScopeGuard guard([this, driver_id]() {
+            try {
+                write_velocity(driver_id, 0.0f);
+            } catch (...) {
+                std::cout << "Error: Failed to stop motor {} during cleanup" << driver_id << "\n";
+            }
+        });
+
+        try {
+            // 1. 원점 설정 모드 활성화
+            write_set_origin(driver_id, false);
+            std::this_thread::sleep_for(COMMAND_DELAY);
+
+            // 2. 원점 탐색 시작
+            write_velocity(driver_id, ORIGIN_SEARCH_SPEED);
+
+            // 3. 원점 감지 대기
+            auto start_time = std::chrono::steady_clock::now();
+            struct can_frame frame;
+
+            while (std::chrono::steady_clock::now() - start_time < TIMEOUT_DURATION) {
+                // 주기적으로 명령 전송
+                write_velocity(driver_id, ORIGIN_SEARCH_SPEED);
+                if (readCanFrame(frame)) {
+                    // 여기서 프레임에서 직접 전류값 추출
+                    // 예: 전류값이 frame.data[4-5]에 있다고 가정
+                    int16_t current_raw = (frame.data[4] << 8) | frame.data[5];
+                float current = current_raw * 0.01f;  // Scale factor 적용
+
+                if (current > CURRENT_THRESHOLD) {
+                    std::cout << "Origin detected for motor " << driver_id 
+                             << ", Current: " << current << "A\n";
+
+                    write_velocity(driver_id, 0.0f);
+                    write_set_origin(driver_id, true);
+                    write_position_velocity(driver_id, 0.0f, 50.0f, 50.0f);
+
+                    guard.release();
+                    return true;
+                }
+            }
+            std::this_thread::sleep_for(POLLING_INTERVAL);
+        }
+
+        std::cout << "Origin initialization timeout for motor " << driver_id << "\n";
+        return false;
+
+        } catch (const std::exception& e) {
+            std::cerr << "Origin initialization failed for motor " << driver_id 
+                    << ": " << e.what() << "\n";
+            return false;
+        }   
+    }
 private:
     int socket_fd_;
-    bool is_connected_{false};	// 연결 상태를 is_connected_ 변수로 관리
-    float current_position_{0.0f};
-    float current_speed_{0.0f};
-    float current_acceleration_{0.0f};
-    uint8_t control_mode_{0};  // 3: velocity mode, 6: position-velocity mode
-    static constexpr int TIMEOUT_MS = 1000;
-    MotorDataManager motor_manager_;  // 멤버 변수로 추가
+    bool is_connected_;
+    MotorDataManager motor_manager_;
+    int control_mode_;
+    float current_speed_;
+    float current_position_;
+    float current_acceleration_;
+    std::thread command_thread_;        // 명령 전송용 스레드
+    std::atomic<bool> running_{false};  // 스레드 실행 제어
+    std::mutex command_mutex_;          // 명령 데이터 보호
+    can_frame current_command_;         // 현재 전송할 명령
+    bool has_command_{false};           // 명령 존재 여부
+
+    // 추가할 private 멤버 함수
+    void command_loop() {
+        while (running_) {
+            if (has_command_) {
+                std::lock_guard<std::mutex> lock(command_mutex_);
+                if (is_connected_) {
+                    ::write(socket_fd_, &current_command_, sizeof(struct can_frame));
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+
 
 };
+
 
 #endif // MOTOR_CAN_COMMS_HPP

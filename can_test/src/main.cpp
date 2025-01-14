@@ -26,7 +26,6 @@ void setNonBlockingInput() {
     fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
 }
 
-/* read_motor_values() 함수 내부에서 이미 데이터를 파싱하고 있음
 void parseMotorData(const can_frame& frame, MotorData& data) {
     if (frame.can_dlc >= 8) {
         // Position: Data[0-1], scale 0.1
@@ -48,7 +47,7 @@ void parseMotorData(const can_frame& frame, MotorData& data) {
         data.error = frame.data[7];
     }
 }
-*/ 
+
 void printMotorData(const MotorData& data) {
     std::cout << std::fixed << std::setprecision(1);
     std::cout << "Position: " << data.position << "° "
@@ -60,134 +59,37 @@ void printMotorData(const MotorData& data) {
 }
 
 int main() {
-    signal(SIGINT, signalHandler);
+    signal(SIGINT, signalHandler);  // Ctrl+C 처리
     
     try {
+        // CAN 드라이버 초기화 및 연결
         CanComms can_driver;
         std::cout << "Connecting to CAN bus...\n";
-        can_driver.connect("can0", 1000000);
+        can_driver.connect("can0", 1000000);  // 1Mbps 속도로 연결
         std::cout << "Successfully connected to CAN bus\n";
-        std::cout << "Monitoring CAN messages... (Press Ctrl+C to exit)\n";
-        std::cout << "Press 'o' to set origin for motors 1 and 2\n\n";
-
-        setNonBlockingInput();  // non-blocking 키보드 입력 설정
         
-        // 속도 값을 저장할 변수
-        float target_rpm = 200.0f;  // 목표 속도
-        bool motor_running = true;  // 모터 구동 상태 플래그
+        can_driver.initialize_motor_origin(1);
+        
+        while(running) { 
 
-        // struct can_frame frame;
-        // MotorData motor_data;
-        auto last_print_time = std::chrono::steady_clock::now();
-        const auto print_interval = std::chrono::milliseconds(100);
-        // 초기 속도 설정
-        can_driver.write_velocity(1, target_rpm);
-
-         // 원점 설정 먼저 실행
-        if (can_driver.initialize_motor_origin(1)) {
-            std::cout << "Origin initialization successful\n";
-            // 원점 설정 성공 후 속도 명령 전송
-            can_driver.write_velocity(1, target_rpm);
-        } else {
-            std::cerr << "Origin initialization failed\n";
-            return 1;  // 원점 설정 실패 시 프로그램 종료
-        }
-
-        while(running && can_driver.connected()) {
-            try {
-                auto current_time = std::chrono::steady_clock::now();
-
-                /*// 키보드 입력 처리
-                char c;
-                if (read(STDIN_FILENO, &c, 1) > 0) {
-                    if (c == 'o' || c == 'O') {
-                        std::cout << "\nSetting origin for motors 1 and 2...\n";
-                        // 모터 1 원점 설정 (영구 저장)
-                        can_driver.write_set_origin(1, true);
-                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                        // 모터 2 원점 설정 (영구 저장)
-                        can_driver.write_set_origin(2, true);
-                        std::cout << "Origin set complete!\n";
-                    }
-                }
-                */
-                // 키보드 입력 처리
-                char c;
-                if (read(STDIN_FILENO, &c, 1) > 0) {
-                    if (c == 'o' || c == 'O') {
-                        std::cout << "\nStopping motor 1...\n";
-                        // 모터 1에 속도 0 명령
-                        can_driver.write_velocity(1, 0.0f);
-                        motor_running = false;  // 모터 상태 플래그 변경
-
-                        std::cout << "Motor 1 stopped!\n";
-                        running = false;  // 프로그램 종료 플래그 설정
-                    }
-                }
-                /*
-                // 모터가 구동 중일 때만 속도 명령 갱신
-                if (motor_running) {
-                    can_driver.write_velocity(1, target_rpm);
-                }
-
-                // 100ms 대기
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                */
-               
-                /* 이 부분 다시 작성
-                // CAN 프레임 읽기 및 처리
-                if (can_driver.readCanFrame(frame)) {
-                    auto current_time = std::chrono::steady_clock::now();
-                    
-                    if (current_time - last_print_time >= print_interval) {
-                        // Raw 데이터 출력
-                        std::cout << "Raw: ";
-                        can_driver.printCanFrame(frame);
-                        
-                        // 모터 데이터 파싱 및 출력
-                        parseMotorData(frame, motor_data);
-                        std::cout << "Decoded: ";
-                        printMotorData(motor_data);
-                        std::cout << "------------------------" << std::endl;
-                        
-                        last_print_time = current_time;
-                    }
-                }*/
-                // CAN 프레임 읽기 및 처리
-                if (current_time - last_print_time >= print_interval) {
-                    try {
-                        // read_motor_values 함수 호출로 모터 데이터 읽기
-                        int val_1 = 0, val_2 = 0;
-                        can_driver.read_motor_values(val_1, val_2);
-                        std::cout << "잘됨????????????????\n";
-                        // 다음 출력 시간 업데이트
-                        last_print_time = current_time;
-                    }
-                    catch(const std::exception& e) {
-                        std::cerr << "Error reading motor values: " << e.what() << std::endl;
-                    }
-                }
+            // CAN 프레임 읽기 및 처리
+            struct can_frame frame;
+            if (can_driver.readCanFrame(frame)) {
+                can_driver.printCanFrame(frame);
             }
-            catch(const std::exception& e) {
-                std::cerr << "Error: " << e.what() << std::endl;
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-        
-        // 프로그램 종료 시 터미널 설정 복구
-        struct termios ttystate;
-        tcgetattr(STDIN_FILENO, &ttystate);
-        ttystate.c_lflag |= (ICANON | ECHO);
-        tcsetattr(STDIN_FILENO, TCSANOW, &ttystate);
-        
-        std::cout << "\nClosing CAN connection...\n";
+        // 안전한 종료 처리
+        std::cout << "\nStopping motor...\n";
+        can_driver.write_velocity(1, 0.0f);
         can_driver.disconnect();
-        std::cout << "CAN connection closed.\n";
-    }
-    catch(const std::exception& e) {
-        std::cerr << "Fatal error: " << e.what() << std::endl;
+        std::cout << "Program terminated successfully\n";
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
         return 1;
     }
-    
+
     return 0;
 }
