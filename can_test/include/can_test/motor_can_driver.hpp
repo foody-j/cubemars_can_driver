@@ -364,8 +364,7 @@ void connect(const std::string &can_interface, int32_t bitrate) {
             std::cout << "원점 감지 대기\n";
 
             while (std::chrono::steady_clock::now() - start_time < TIMEOUT_DURATION) {
-                write_velocity(driver_id, ORIGIN_SEARCH_SPEED);
-    
+                // write_velocity(driver_id, ORIGIN_SEARCH_SPEED);
                 // 저장된 모터 데이터 확인
                 MotorData motor_data = motor_manager_.getMotorData(driver_id);
                 float current = motor_data.current;
@@ -378,11 +377,10 @@ void connect(const std::string &can_interface, int32_t bitrate) {
                         if (current > CURRENT_THRESHOLD) {
                             std::cout << "Origin detected for motor " << driver_id 
                                     << ", Current: " << current << "A\n";
-
-                            write_velocity(driver_id, 0.0f);
                             write_set_origin(driver_id, true);
-                            write_position_velocity(driver_id, 0.0f, 50.0f, 50.0f);
-
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                            write_velocity(driver_id, 0.0f);
+                            //write_set_origin(driver_id, true);
                             guard.release();
                             return true;
                         }
@@ -447,9 +445,6 @@ private:
                     data.temperature = temperature;
                     int8_t error = frame.data[7];
                     data.error = error;
-                
-                    
-                    
                     // 모터 매니저 업데이트
                     motor_manager_.updateMotorData(resp_id, data);
                 }

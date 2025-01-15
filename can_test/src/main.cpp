@@ -79,10 +79,27 @@ int main() {
         
         std::cout << "Successfully connected to CAN bus\n";
         
-        can_driver.initialize_motor_origin(1);
+        // while문 들어가기 전에 딜레이 추가
+        std::this_thread::sleep_for(std::chrono::seconds(2)); 
+        
+        if (can_driver.initialize_motor_origin(1)) {
+            std::cout << "1# Motor Origin initialization Sucessful\n";
+        } else {
+            std::cout << "1# Motor Origin initialization failed\n";
+            return 1;
+        }
+        
+        /*
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+
+        if (can_driver.initialize_motor_origin(2)) {
+            std::cout << "2# Motor Origin initialization Sucessful\n";
+        } else {
+            std::cout << "2# Motor Origin initialization failed\n";
+            return 1;
+        }*/
         
         while(running) { 
-
             // CAN 프레임 읽기 및 처리
             struct can_frame frame;
             if (can_driver.readCanFrame(frame)) {
