@@ -312,7 +312,7 @@ void connect(const std::string &can_interface, int32_t bitrate) {
         static constexpr float ORIGIN_SEARCH_SPEED = -100.0f;   // 원점 탐색 속도
         static constexpr float CURRENT_THRESHOLD = 1.0f;    // 전류 감지 임계값
         static constexpr auto TIMEOUT_DURATION = std::chrono::seconds(20);  //최대 대기 시간
-        static constexpr auto POLLING_INTERVAL = std::chrono::milliseconds(100);    // 상태 확인 주기
+        static constexpr auto POLLING_INTERVAL = std::chrono::milliseconds(10);    // 상태 확인 주기
         static constexpr auto COMMAND_DELAY = std::chrono::milliseconds(500);   // 명령 사이 지연 시간
         
         // 안전한 리소스 정리를 위한 RAII 클래스
@@ -378,7 +378,7 @@ void connect(const std::string &can_interface, int32_t bitrate) {
                             std::cout << "Origin detected for motor " << driver_id 
                                     << ", Current: " << current << "A\n";
                             write_set_origin(driver_id, true);
-                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                            std::this_thread::sleep_for(std::chrono::milliseconds(10));
                             write_velocity(driver_id, 0.0f);
                             //write_set_origin(driver_id, true);
                             guard.release();
@@ -419,7 +419,7 @@ private:
                     ::write(socket_fd_, &current_command_, sizeof(struct can_frame));
                 }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
 
