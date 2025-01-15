@@ -312,9 +312,10 @@ void connect(const std::string &can_interface, int32_t bitrate) {
         static constexpr float ORIGIN_SEARCH_SPEED = -100.0f;   // 원점 탐색 속도
         static constexpr float CURRENT_THRESHOLD = 1.0f;    // 전류 감지 임계값
         static constexpr auto TIMEOUT_DURATION = std::chrono::seconds(20);  //최대 대기 시간
-        static constexpr auto POLLING_INTERVAL = std::chrono::milliseconds(10);    // 상태 확인 주기
+        static constexpr auto POLLING_INTERVAL = std::chrono::milliseconds(1);    // 상태 확인 주기
         static constexpr auto COMMAND_DELAY = std::chrono::milliseconds(500);   // 명령 사이 지연 시간
         
+
         // 안전한 리소스 정리를 위한 RAII 클래스
         class ScopeGuard {
         public:
@@ -339,6 +340,16 @@ void connect(const std::string &can_interface, int32_t bitrate) {
             std::cout << "Error: Invalid motor ID: " << driver_id << "\n";
             return false;
         }
+        // 읽기 스레드 중지
+        stop_read_thread();
+
+        // RAII를 활용하여 함수 종료 시 자동으로 읽기 스레드 재시작
+        ScopeGuard thread_guard([this]() {
+            read_running_ = true;
+        });
+        // 원점 초기화 시작 전에 읽기 스레드가 중지되고
+        // 함수가 종료될 때(성공하든 실패하든) 자동으로 읽기 스레드가 재시작됩니다.
+
 
         std::cout << "Starting origin initialization for motor " << driver_id << "\n";
         // 안전을 위한 cleanup guard 설정
@@ -366,26 +377,53 @@ void connect(const std::string &can_interface, int32_t bitrate) {
             while (std::chrono::steady_clock::now() - start_time < TIMEOUT_DURATION) {
                 // write_velocity(driver_id, ORIGIN_SEARCH_SPEED);
                 // 저장된 모터 데이터 확인
-                MotorData motor_data = motor_manager_.getMotorData(driver_id);
-                float current = motor_data.current;
-                float position = motor_data.position;
-                
-                std::cout << "Motor " << driver_id 
-                        << " 위치 값: " << position
-                        << " 전류 값: " << current << "A\n";
+                // MotorData motor_data = motor_manager_.getMotorData(driver_id);
+                // float current = motor_data.current;
+                // float position = motor_data.position;
+                if (readCanFrame(frame)) {
+                    uint8_t resp_id = frame.can_id & 0xFF;  // CAN ID의 하위 8비트만 추출
+                    if (resp_id == driver_id) {  // 원하는 모터의 응답인지 확인
+
+                        // 위치 데이터 추출
+                        int16_t position_raw = (frame.data[0] << 8) | frame.data[1];
+                        float position = position_raw * 0.1f;
+
+                        // 전류 데이터 추출 (data[4-5])
+                        int16_t current_raw = (frame.data[4] << 8) | frame.data[5];
+                        float current = current_raw * 0.01f;  // Scale factor 적용
+                               
+                        std::cout << "Motor " << driver_id 
+                                << " 위치 값: " << position
+                                << " 전류 값: " << current << "A\n";
 
                         if (current > CURRENT_THRESHOLD) {
                             std::cout << "Origin detected for motor " << driver_id 
                                     << ", Current: " << current << "A\n";
-                            write_set_origin(driver_id, true);
-                            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                            
+                            // 1. 즉시 모터 정지
                             write_velocity(driver_id, 0.0f);
-                            //write_set_origin(driver_id, true);
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));  // 정지 대기 시간 증가
+                            
+                            // 2. 반작용을 상쇄하기 위한 약한 반대 방향 힘 적용
+                            write_velocity(driver_id, 10.0f);  // 낮은 속도로 반대 방향
+                            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                            // 3. 완전 정지
+                            write_velocity(driver_id, 0.0f);
+                            std::this_thread::sleep_for(std::chrono::milliseconds(500));  // 충분한 안정화 시간
+                            
+                            std::cout << "포지션: " << position << std::endl;
+                            
+                            // 4. 원점 설정
+                            write_set_origin(driver_id, true);
+                            write_set_origin(driver_id, true);
+                            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                            write_velocity(driver_id, 0.0f);
+
                             guard.release();
                             return true;
                         }
-                    
-                
+                    }
+                }
                 std::this_thread::sleep_for(POLLING_INTERVAL);
             }
 
@@ -410,6 +448,7 @@ private:
     bool has_command_{false};           // 명령 존재 여부
     std::thread read_thread_;          // 읽기 전용 스레드
     std::atomic<bool> read_running_{false};  // 읽기 스레드 제어
+    
     // 추가할 private 멤버 함수
     void command_loop() {
         while (running_) {
@@ -451,6 +490,17 @@ private:
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
+    }
+    void stop_read_thread() {
+        read_running_ = false;
+        if (read_thread_.joinable()) {
+            read_thread_.join();  // 스레드가 완전히 종료될 때까지 대기
+        }
+    }
+
+    void start_read_thread() {
+        read_running_ = true;
+        read_thread_ = std::thread(&CanComms::read_loop, this);
     }
 };
 
