@@ -62,6 +62,9 @@ int main() {
     signal(SIGINT, signalHandler);  // Ctrl+C 처리
     
     try {
+        // 전역 또는 클래스 멤버 변수로 선언
+        auto last_time = std::chrono::steady_clock::now();
+        int frame_count = 0;
         // CAN 드라이버 초기화 및 연결
         CanComms can_driver;
         std::cout << "Connecting to CAN bus...\n";
@@ -80,46 +83,22 @@ int main() {
         std::cout << "Successfully connected to CAN bus\n";
         
         // while문 들어가기 전에 딜레이 추가
-        std::this_thread::sleep_for(std::chrono::seconds(2)); 
-        
-        if (can_driver.initialize_motor_origin(1)) {
-            std::cout << "1# Motor Origin initialization Sucessful\n";
-        } else {
-            std::cout << "1# Motor Origin initialization failed\n";
-            return 1;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        
-        if (can_driver.initialize_motor_origin(2)) {
-            std::cout << "2# Motor Origin initialization Sucessful\n";
-        } else {
-            std::cout << "2# Motor Origin initialization failed\n";
-            return 1;
-        }
-    
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(std::chrono::seconds(1));
 
         while(running) { 
             // CAN 프레임 읽기 및 처리
             struct can_frame frame;
             if (can_driver.readCanFrame(frame)) {
-                // 모터 ID 확인 (하위 8비트)
-                uint8_t motor_id = frame.can_id & 0xFF;
-                
-                // 해당 모터의 데이터 가져오기
-                MotorData motor_data = can_driver.getMotorData(motor_id);
-                
-                // 모터 데이터 출력
-                std::cout << "Motor " << (int)motor_id << ": "
-                            << "Position: " << motor_data.position << "° "
-                            << "Speed: " << motor_data.speed << " RPM "
-                            << "Current: " << motor_data.current << "A "
-                            << "Temperature: " << (int)motor_data.temperature << "°C "
-                            << "Error: 0x" << std::hex << (int)motor_data.error 
-                            << std::dec << std::endl;
+                std::cout << "CAN ID: " << std::hex << frame.can_id << "  ";
+                for(int i = 0; i < 8; i++) {
+                    // unsigned int로 캐스팅하여 숫자값으로 출력
+                    std::cout << static_cast<unsigned int>(frame.data[i]) << " ";
+                }
+                std::cout << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(2000));
             }
 
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            
         }
         // 안전한 종료 처리
         std::cout << "\nStopping motor...\n";
