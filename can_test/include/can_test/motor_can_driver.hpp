@@ -378,7 +378,7 @@ void connect(const std::string &can_interface, int32_t bitrate) {
                             std::cout << "Origin detected for motor " << driver_id 
                                     << ", Current: " << current << "A\n";
                             write_set_origin(driver_id, true);
-                            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                            std::this_thread::sleep_for(std::chrono::milliseconds(1));
                             write_velocity(driver_id, 0.0f);
                             //write_set_origin(driver_id, true);
                             guard.release();
@@ -449,7 +449,7 @@ private:
                     motor_manager_.updateMotorData(resp_id, data);
                 }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
 };
