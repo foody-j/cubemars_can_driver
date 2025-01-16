@@ -407,7 +407,9 @@ public:
                         // 4. temporary origin 먼저 설정
                         write_set_origin(driver_id, true);
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                        // write_velocity(driver_id, 0.0f);
+                        
+                        
+                        write_velocity(driver_id, 0.0f);
                         // 5. permanent origin 설정
                         // write_set_origin(driver_id, true);
                         // std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -688,6 +690,7 @@ private:
                             current_command_.can_dlc = 1;
                             std::copy_n(data, 1, current_command_.data);
                             
+                            /*
                             // 3번 반복 전송 로직은 last_sent 시간 체크로 구현
                             static int repeat_count = 0;
                             if (repeat_count < 3) {
@@ -696,7 +699,7 @@ private:
                             } else {
                                 cmd.active = false;  // 3번 전송 완료 후 비활성화
                                 repeat_count = 0;
-                            }
+                            }*/
                         }
                         
                         // CAN 메시지 전송
