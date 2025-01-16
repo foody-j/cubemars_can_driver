@@ -22,7 +22,7 @@
 #include <iostream>  // std::cout 사용을 위해 필요
 #include <atomic>
 #include <mutex>
-#include <queue>   // std::queue를 위한 헤더
+//#include <queue>   // std::queue를 위한 헤더
 
 class CanComms
 {
@@ -252,39 +252,37 @@ public:
     
     write(id, data, 4);
     }*/
-   
+
     void write(uint32_t id, const uint8_t* data, uint8_t len) {
-        // CAN 연결 상태 확인: 연결되지 않았거나 소켓이 유효하지 않으면 예외 발생
+        // CAN 연결 상태 확인
         if (!is_connected_ || socket_fd_ < 0) {
             throw std::system_error(ENOTCONN, std::generic_category(), "CAN is not connected");
         }
 
-        // 새로운 MotorCommand 객체 생성
-        MotorCommand cmd;
-        
-        // CAN ID 설정 (Extended Frame Format 플래그 추가)
-        cmd.frame.can_id = id | CAN_EFF_FLAG;
-        
-        // 데이터 길이 설정 (최대 8바이트로 제한)
-        cmd.frame.can_dlc = std::min(len, static_cast<uint8_t>(8));
-        
-        // 현재 시간을 타임스탬프로 기록
-        cmd.timestamp = std::chrono::steady_clock::now();
-        
         // 모터 ID 추출 (하위 8비트)
-        cmd.motor_id = id & 0xFF;
+        uint8_t motor_id = id & 0xFF;
         
-        // 데이터가 존재하면 CAN 프레임의 데이터 영역에 복사
-        if (data != nullptr) {
-            std::copy_n(data, cmd.frame.can_dlc, cmd.frame.data);
+        // motor_id가 유효한지 확인 (1~6 범위)
+        if (motor_id < 1 || motor_id > MAX_MOTORS) {
+            throw std::runtime_error("Invalid motor ID");
         }
+
+        // 명령 뮤텍스 잠금
+        std::lock_guard<std::mutex> lock(command_mutex_);
         
-        // 큐에 대한 뮤텍스 락 획득
-        std::lock_guard<std::mutex> lock(queue_mutex_);
+        // 해당 모터의 명령 업데이트
+        motor_commands_[motor_id - 1].frame.can_id = id | CAN_EFF_FLAG;
+        motor_commands_[motor_id - 1].frame.can_dlc = std::min(len, static_cast<uint8_t>(8));
+        motor_commands_[motor_id - 1].motor_id = motor_id;
+        motor_commands_[motor_id - 1].active = true;
         
-        // 명령을 큐에 추가
-        command_queue_.push(cmd);
-    }
+        // 데이터가 존재하면 복사
+        if (data != nullptr) {
+            std::copy_n(data, motor_commands_[motor_id - 1].frame.can_dlc, 
+                    motor_commands_[motor_id - 1].frame.data);
+        }
+    }   
+    
 
 
 
@@ -488,14 +486,21 @@ private:
     bool has_command_{false};           // 명령 존재 여부
     std::thread read_thread_;          // 읽기 전용 스레드
     std::atomic<bool> read_running_{false};  // 읽기 스레드 제어
+    // 모터 명령을 저장하기 위한 구조체 정의
     struct MotorCommand {
-        can_frame frame;
-        std::chrono::steady_clock::time_point timestamp;
-        uint8_t motor_id;
+        can_frame frame;    // CAN 프레임 데이터 저장
+        uint8_t motor_id;   // 모터 ID 저장
+        bool active;    // 해당 모터 명령의 활성화 상태
     };
 
-    std::queue<MotorCommand> command_queue_;
-    std::mutex queue_mutex_;
+    // 최대 지원 모터 수를 6개로 정의하는 상수
+    static const int MAX_MOTORS = 6;
+    // 각 모터별 마지막 명령을 저장하는 배열 (크기: MAX_MOTORS)
+    std::array<MotorCommand, MAX_MOTORS> motor_commands_;
+    // 명령 데이터 접근을 위한 뮤텍스 선언
+    std::mutex command_mutex_;
+
+
     // 추가할 private 멤버 함수
     /*
     void command_loop() {
@@ -509,35 +514,25 @@ private:
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }*/
-    void command_loop() {
-        // running_ 플래그가 true인 동안 계속 실행되는 무한 루프
-        while (running_) {
-            // 명령을 저장할 MotorCommand 구조체 변수 선언
-            MotorCommand cmd;
-            // 명령 존재 여부를 나타내는 플래그 초기화
-            bool has_command = false;
-            
-            {   // 중괄호로 lock의 범위를 최소화
-                // queue_mutex_에 대한 lock 획득 (scope 벗어나면 자동 해제)
-                std::lock_guard<std::mutex> lock(queue_mutex_);
-                // 명령 큐가 비어있지 않다면
-                if (!command_queue_.empty()) {
-                    // 큐의 첫 번째 명령을 cmd에 복사
-                    cmd = command_queue_.front();
-                    // 큐에서 첫 번째 명령 제거
-                    command_queue_.pop();
-                    // 명령 존재 플래그를 true로 설정
-                    has_command = true;
-                }
-            }   // lock 자동 해제
 
-            // 명령이 존재하고 CAN이 연결된 상태라면
-            if (has_command && is_connected_) {
-                // CAN 소켓을 통해 명령 프레임 전송
-                ::write(socket_fd_, &cmd.frame, sizeof(struct can_frame));
+    // 명령 전송을 위한 루프 함수
+    void command_loop() {
+        // running_ 플래그가 true인 동안 계속 실행
+        while (running_) {
+            // command_mutex_를 이용해 스레드 안전하게 잠금
+            std::lock_guard<std::mutex> lock(command_mutex_);
+            
+            // motor_commands_ 배열의 모든 요소를 순회
+            for (const auto& cmd : motor_commands_) {
+                // 명령이 활성화되어 있고 CAN이 연결된 상태인 경우에만
+                if (cmd.active && is_connected_) {
+                    // CAN 버스로 명령 프레임 전송
+                    ::write(socket_fd_, &cmd.frame, sizeof(struct can_frame));
+                }
             }
-            // 100마이크로초(0.1밀리초) 대기 - CPU 부하 감소
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
+            
+            // 10밀리초 대기 (CPU 부하 감소)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
 
