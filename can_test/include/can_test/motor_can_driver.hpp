@@ -224,7 +224,7 @@ public:
     }
     has_command_ = true;
     }
-
+    /*
     void write_velocity(uint8_t driver_id, float rpm) {
     control_mode_ = 3;  // Velocity Mode 설정
     uint32_t control_mode = 3;  // Velocity Mode
@@ -240,6 +240,19 @@ public:
     data[3] = speed & 0xFF;          // Speed Bit 1-8
     
     write(id, data, 4);
+    }*/
+    // 모터 명령 설정 함수 수정
+    void write_velocity(uint8_t driver_id, float rpm) {
+        if (driver_id < 1 || driver_id > MAX_MOTORS) {
+            throw std::runtime_error("Invalid motor ID");
+        }
+        
+        // 모터 명령 업데이트
+        motor_commands_[driver_id - 1].motor_id = driver_id;
+        motor_commands_[driver_id - 1].value = rpm;
+        motor_commands_[driver_id - 1].active = true;
+        motor_commands_[driver_id - 1].command_type = CommandType::VELOCITY;
+        motor_commands_[driver_id - 1].last_sent = std::chrono::steady_clock::now();
     }
 
     
@@ -253,6 +266,7 @@ public:
         write(id, data, 1);  // 1바이트 데이터 전송
     }
 
+    /*
     void write_position_velocity(uint8_t driver_id, float position, float rpm, float acceleration) {
         control_mode_ = 6;  // Position-Velocity Mode 설정
         uint32_t control_mode = 6;  // Position-Velocity Loop Mode
@@ -275,7 +289,23 @@ public:
         data[7] = acc & 0xFF;             // Acceleration Low Byte
         
         write(id, data, 8);
+    }*/
+    void write_position_velocity(uint8_t driver_id, float position, float rpm, float acceleration) {
+        if (driver_id < 1 || driver_id > MAX_MOTORS) {
+            throw std::runtime_error("Invalid motor ID");
+        }
+        
+        // 모터 명령 업데이트
+        motor_commands_[driver_id - 1].motor_id = driver_id;
+        motor_commands_[driver_id - 1].position = position;
+        motor_commands_[driver_id - 1].velocity = rpm;
+        motor_commands_[driver_id - 1].acceleration = acceleration;
+        motor_commands_[driver_id - 1].active = true;
+        motor_commands_[driver_id - 1].command_type = CommandType::POSITION_VELOCITY;
+        motor_commands_[driver_id - 1].last_sent = std::chrono::steady_clock::now();
     }
+    
+
     // 모터 데이터 조회 함수 추가
     MotorData getMotorData(uint8_t motor_id) {
         return motor_manager_.getMotorData(motor_id);
@@ -444,15 +474,41 @@ private:
     std::atomic<bool> read_running_{false};  // 읽기 스레드 제어
     // 최대 지원 모터 수를 6개로 정의하는 상수
     static const int MAX_MOTORS = 6;
+
+    // 명령 타입 열거형 추가
+    enum class CommandType {
+        VELOCITY,
+        POSITION_VELOCITY
+    };
+
+    /*
     // 명령 큐 구조체 추가
     struct MotorCommand {
         uint8_t motor_id;
         float value;
         std::chrono::steady_clock::time_point last_sent;
         bool active;
+    };*/
+
+    // 명령 구조체 수정
+    struct MotorCommand {
+        uint8_t motor_id;
+        float value;  // velocity mode에서 사용
+        float position;  // position-velocity mode에서 사용
+        float velocity;  // position-velocity mode에서 사용
+        float acceleration;  // position-velocity mode에서 사용
+        std::chrono::steady_clock::time_point last_sent;
+        bool active;
+        CommandType command_type;
+        
+        MotorCommand() : motor_id(0), value(0), position(0), velocity(0), 
+                        acceleration(0), active(false), 
+                        command_type(CommandType::VELOCITY) {}
     };
 
     std::array<MotorCommand, MAX_MOTORS> motor_commands_;  // 각 모터별 명령 저장
+
+    /*
     void command_loop() {
         while (running_) {
             if (has_command_) {
@@ -461,6 +517,69 @@ private:
                 }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }*/
+
+    // 명령 루프 함수 수정
+    void command_loop() {
+        static constexpr auto UPDATE_INTERVAL = std::chrono::milliseconds(10);
+        
+        while (running_) {
+            auto current_time = std::chrono::steady_clock::now();
+            
+            // 각 모터의 활성 명령 처리
+            for (auto& cmd : motor_commands_) {
+                if (cmd.active && is_connected_) {
+                    // 마지막 전송 후 UPDATE_INTERVAL이 지났는지 확인
+                    if (current_time - cmd.last_sent >= UPDATE_INTERVAL) {
+                        // 명령 타입에 따라 적절한 CAN 메시지 생성 및 전송
+                        if (cmd.command_type == CommandType::VELOCITY) {
+                            uint32_t control_mode = 3;  // Velocity Mode
+                            uint32_t id = (control_mode << 8) | cmd.motor_id;
+                            
+                            uint8_t data[8] = {0};
+                            int32_t speed = static_cast<int32_t>(cmd.value);
+                            
+                            data[0] = (speed >> 24) & 0xFF;
+                            data[1] = (speed >> 16) & 0xFF;
+                            data[2] = (speed >> 8) & 0xFF;
+                            data[3] = speed & 0xFF;
+                            
+                            current_command_.can_id = id | CAN_EFF_FLAG;
+                            current_command_.can_dlc = 4;
+                            std::copy_n(data, 4, current_command_.data);
+                            
+                        } else if (cmd.command_type == CommandType::POSITION_VELOCITY) {
+                            uint32_t control_mode = 6;  // Position-Velocity Mode
+                            uint32_t id = (control_mode << 8) | cmd.motor_id;
+                            
+                            uint8_t data[8] = {0};
+                            int32_t pos = static_cast<int32_t>(cmd.position * 10000.0f);
+                            int16_t speed = static_cast<int16_t>(cmd.velocity);
+                            int16_t acc = static_cast<int16_t>(cmd.acceleration / 10.0f);
+                            
+                            data[0] = (pos >> 24) & 0xFF;
+                            data[1] = (pos >> 16) & 0xFF;
+                            data[2] = (pos >> 8) & 0xFF;
+                            data[3] = pos & 0xFF;
+                            data[4] = (speed >> 8) & 0xFF;
+                            data[5] = speed & 0xFF;
+                            data[6] = (acc >> 8) & 0xFF;
+                            data[7] = acc & 0xFF;
+                            
+                            current_command_.can_id = id | CAN_EFF_FLAG;
+                            current_command_.can_dlc = 8;
+                            std::copy_n(data, 8, current_command_.data);
+                        }
+                        
+                        // CAN 메시지 전송
+                        ::write(socket_fd_, &current_command_, sizeof(struct can_frame));
+                        cmd.last_sent = current_time;
+                    }
+                }
+            }
+            
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
 
