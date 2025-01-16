@@ -80,7 +80,8 @@ int main() {
         
         std::cout << "Successfully connected to CAN bus\n";
         
-     
+ 
+        
         if (can_driver.initialize_motor_origin(1)) {
             std::cout << "1# Motor Origin initialization Sucessful\n";
         } else {

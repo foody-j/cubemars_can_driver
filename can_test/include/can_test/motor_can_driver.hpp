@@ -255,13 +255,19 @@ public:
         motor_commands_[driver_id - 1].last_sent = std::chrono::steady_clock::now();
     }
 
-    
+    /*
     void write_set_origin(uint8_t driver_id, bool is_permanent = false) {
         uint32_t control_mode = 5;  // Set Origin Mode
         uint32_t id = (control_mode << 8) | driver_id;
         
         uint8_t data[8] = {0};
         data[0] = is_permanent ? 1 : 0;  // 0: temporary origin, 1: permanent origin
+        // 3번 반복하여 명령 전송
+        for(int i = 0; i < 3; i++) {
+            write(id, data, 1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        
         
         // 디버깅을 위한 메시지 출력
         std::cout << "Sending Set Origin command to motor " << static_cast<int>(driver_id) << std::endl;
@@ -269,7 +275,21 @@ public:
                 << std::hex << (id | CAN_EFF_FLAG) << std::dec << std::endl;
         std::cout << "Data[0]: " << static_cast<int>(data[0]) << " (is_permanent: " << is_permanent << ")" << std::endl;
          
-        write(id, data, 1);  // 1바이트 데이터 전송
+        
+    }*/
+
+    // set_origin 함수 수정
+    void write_set_origin(uint8_t driver_id, bool is_permanent = false) {
+        if (driver_id < 1 || driver_id > MAX_MOTORS) {
+            throw std::runtime_error("Invalid motor ID");
+        }
+        
+        // 모터 명령 업데이트
+        motor_commands_[driver_id - 1].motor_id = driver_id;
+        motor_commands_[driver_id - 1].is_permanent = is_permanent;
+        motor_commands_[driver_id - 1].active = true;
+        motor_commands_[driver_id - 1].command_type = CommandType::SET_ORIGIN;
+        motor_commands_[driver_id - 1].last_sent = std::chrono::steady_clock::now();
     }
 
     /*
@@ -371,16 +391,26 @@ public:
 
                         if (current > CURRENT_THRESHOLD) {
                             std::cout << "원점 감지됨: " << current << "A\n";
-                            // 모터 정지
-                            write_velocity(driver_id, 0.0f);
-                            std::this_thread::sleep_for(std::chrono::milliseconds(100));                            
-                            // 반작용을 상쇄하기 위한 약한 반대 방향 힘 적용
-                            write_velocity(driver_id, 10.0f);  // 낮은 속도로 반대 방향
-                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                            // 원점 설정
-                            write_set_origin(driver_id, true);
-                            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                            write_velocity(driver_id, 0.0f);
+
+                        // 1. 즉시 모터 정지
+                        write_velocity(driver_id, 0.0f);
+                        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                        
+                        // 2. 반대 방향으로 살짝 이동 (기계적 스트레스 해소)
+                        write_velocity(driver_id, 50.0f);  // 반대 방향으로 저속 회전
+                        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                        
+                        // 3. 다시 정지
+                        write_velocity(driver_id, 0.0f);
+                        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                        
+                        // 4. temporary origin 먼저 설정
+                        write_set_origin(driver_id, true);
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        // write_velocity(driver_id, 0.0f);
+                        // 5. permanent origin 설정
+                        // write_set_origin(driver_id, true);
+                        // std::this_thread::sleep_for(std::chrono::milliseconds(500));
                             return true;
                         }
                     }
@@ -552,7 +582,8 @@ private:
     // 명령 타입 열거형 추가
     enum class CommandType {
         VELOCITY,
-        POSITION_VELOCITY
+        POSITION_VELOCITY,
+        SET_ORIGIN
     };
 
     /*
@@ -571,6 +602,8 @@ private:
         float position;  // position-velocity mode에서 사용
         float velocity;  // position-velocity mode에서 사용
         float acceleration;  // position-velocity mode에서 사용
+        bool is_permanent;  // SET_ORIGIN 모드에서 사용
+
         std::chrono::steady_clock::time_point last_sent;
         bool active;
         CommandType command_type;
@@ -644,6 +677,26 @@ private:
                             current_command_.can_id = id | CAN_EFF_FLAG;
                             current_command_.can_dlc = 8;
                             std::copy_n(data, 8, current_command_.data);
+                        } else if (cmd.command_type == CommandType::SET_ORIGIN) {
+                            uint32_t control_mode = 5;  // Set Origin Mode
+                            uint32_t id = (control_mode << 8) | cmd.motor_id;
+                            
+                            uint8_t data[8] = {0};
+                            data[0] = cmd.is_permanent ? 1 : 0;
+                            
+                            current_command_.can_id = id | CAN_EFF_FLAG;
+                            current_command_.can_dlc = 1;
+                            std::copy_n(data, 1, current_command_.data);
+                            
+                            // 3번 반복 전송 로직은 last_sent 시간 체크로 구현
+                            static int repeat_count = 0;
+                            if (repeat_count < 3) {
+                                ::write(socket_fd_, &current_command_, sizeof(struct can_frame));
+                                repeat_count++;
+                            } else {
+                                cmd.active = false;  // 3번 전송 완료 후 비활성화
+                                repeat_count = 0;
+                            }
                         }
                         
                         // CAN 메시지 전송
