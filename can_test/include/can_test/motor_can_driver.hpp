@@ -21,7 +21,6 @@
 #include <functional> // std::function 사용을 위해 필요
 #include <iostream>  // std::cout 사용을 위해 필요
 #include <atomic>
-#include <mutex>
 //#include <queue>   // std::queue를 위한 헤더
 
 class CanComms
@@ -216,7 +215,6 @@ public:
         throw std::system_error(ENOTCONN, std::generic_category(), "CAN is not connected");
     }
 
-    std::lock_guard<std::mutex> lock(command_mutex_);
     current_command_ = {};
     current_command_.can_id = id | CAN_EFF_FLAG;
     current_command_.can_dlc = std::min(len, MAX_CAN_DATA_LENGTH);
@@ -440,18 +438,24 @@ private:
     int control_mode_;
     std::thread command_thread_;        // 명령 전송용 스레드
     std::atomic<bool> running_{false};  // 스레드 실행 제어
-    std::mutex command_mutex_;          // 명령 데이터 보호 ,명령 데이터 접근을 위한 뮤텍스 선언
     can_frame current_command_;         // 현재 전송할 명령
     bool has_command_{false};           // 명령 존재 여부
     std::thread read_thread_;          // 읽기 전용 스레드
     std::atomic<bool> read_running_{false};  // 읽기 스레드 제어
     // 최대 지원 모터 수를 6개로 정의하는 상수
     static const int MAX_MOTORS = 6;
+    // 명령 큐 구조체 추가
+    struct MotorCommand {
+        uint8_t motor_id;
+        float value;
+        std::chrono::steady_clock::time_point last_sent;
+        bool active;
+    };
 
+    std::array<MotorCommand, MAX_MOTORS> motor_commands_;  // 각 모터별 명령 저장
     void command_loop() {
         while (running_) {
             if (has_command_) {
-                std::lock_guard<std::mutex> lock(command_mutex_);
                 if (is_connected_) {
                     ::write(socket_fd_, &current_command_, sizeof(struct can_frame));
                 }
