@@ -22,6 +22,7 @@
 #include <iostream>  // std::cout 사용을 위해 필요
 #include <atomic>
 #include <mutex>
+#include <queue>   // std::queue를 위한 헤더
 
 class CanComms
 {
@@ -65,75 +66,78 @@ public:
         CanComms(const CanComms&) = delete;
         CanComms& operator=(const CanComms&) = delete;
 
+    
 
-void connect(const std::string &can_interface, int32_t bitrate) {
-    try {
-        // 1. CAN 인터페이스를 내린다
-        std::stringstream ss;
-        ss << "sudo ip link set " << can_interface << " down";
-        int result = std::system(ss.str().c_str());
-        if (result < 0) {
-            throw std::runtime_error("Failed to set CAN interface down");
+    
+
+    void connect(const std::string &can_interface, int32_t bitrate) {
+        try {
+            // 1. CAN 인터페이스를 내린다
+            std::stringstream ss;
+            ss << "sudo ip link set " << can_interface << " down";
+            int result = std::system(ss.str().c_str());
+            if (result < 0) {
+                throw std::runtime_error("Failed to set CAN interface down");
+            }
+
+            // 2. bitrate 설정
+            ss.str("");
+            ss << "sudo ip link set " << can_interface << " type can bitrate " << bitrate;
+            result = std::system(ss.str().c_str());
+            if (result < 0) {
+                throw std::runtime_error("Failed to set CAN bitrate");
+            }
+
+            // 3. CAN 인터페이스를 올린다
+            ss.str("");
+            ss << "sudo ip link set " << can_interface << " up";
+            result = std::system(ss.str().c_str());
+            if (result < 0) {
+                throw std::runtime_error("Failed to set CAN interface up");
+            }
+
+            // 4. 소켓 생성
+            socket_fd_ = socket(PF_CAN, SOCK_RAW, CAN_RAW);
+            if (socket_fd_ < 0) {
+                throw std::runtime_error("Failed to create CAN socket");
+            }
+
+            // 5. 인터페이스 이름으로 인덱스 찾기
+            struct ifreq ifr;
+            std::strcpy(ifr.ifr_name, can_interface.c_str());
+            if (ioctl(socket_fd_, SIOCGIFINDEX, &ifr) < 0) {
+                close(socket_fd_);
+                throw std::runtime_error("Failed to get interface index");
+            }
+
+            // 6. 소켓 바인딩
+            struct sockaddr_can addr;
+            addr.can_family = AF_CAN;
+            addr.can_ifindex = ifr.ifr_ifindex;
+
+            if (bind(socket_fd_, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+                close(socket_fd_);
+                throw std::runtime_error("Failed to bind CAN socket");
+            }
+
+            is_connected_ = true;
+            // CAN 연결이 성공한 후에 스레드 시작
+            running_ = true;
+            read_running_ = true;
+            command_thread_ = std::thread(&CanComms::command_loop, this);
+            read_thread_ = std::thread(&CanComms::read_loop, this);
+            std::cout << "Successfully connected to " << can_interface << " with bitrate " << bitrate << std::endl;
         }
-
-        // 2. bitrate 설정
-        ss.str("");
-        ss << "sudo ip link set " << can_interface << " type can bitrate " << bitrate;
-        result = std::system(ss.str().c_str());
-        if (result < 0) {
-            throw std::runtime_error("Failed to set CAN bitrate");
+        catch(const std::exception& e) {
+            is_connected_ = false;
+            if (socket_fd_ >= 0) {
+                close(socket_fd_);
+                socket_fd_ = -1;
+            }
+            std::cerr << "CAN connection failed: " << e.what() << std::endl;
+            throw;
         }
-
-        // 3. CAN 인터페이스를 올린다
-        ss.str("");
-        ss << "sudo ip link set " << can_interface << " up";
-        result = std::system(ss.str().c_str());
-        if (result < 0) {
-            throw std::runtime_error("Failed to set CAN interface up");
-        }
-
-        // 4. 소켓 생성
-        socket_fd_ = socket(PF_CAN, SOCK_RAW, CAN_RAW);
-        if (socket_fd_ < 0) {
-            throw std::runtime_error("Failed to create CAN socket");
-        }
-
-        // 5. 인터페이스 이름으로 인덱스 찾기
-        struct ifreq ifr;
-        std::strcpy(ifr.ifr_name, can_interface.c_str());
-        if (ioctl(socket_fd_, SIOCGIFINDEX, &ifr) < 0) {
-            close(socket_fd_);
-            throw std::runtime_error("Failed to get interface index");
-        }
-
-        // 6. 소켓 바인딩
-        struct sockaddr_can addr;
-        addr.can_family = AF_CAN;
-        addr.can_ifindex = ifr.ifr_ifindex;
-
-        if (bind(socket_fd_, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-            close(socket_fd_);
-            throw std::runtime_error("Failed to bind CAN socket");
-        }
-
-        is_connected_ = true;
-        // CAN 연결이 성공한 후에 스레드 시작
-        running_ = true;
-        read_running_ = true;
-        command_thread_ = std::thread(&CanComms::command_loop, this);
-        read_thread_ = std::thread(&CanComms::read_loop, this);
-        std::cout << "Successfully connected to " << can_interface << " with bitrate " << bitrate << std::endl;
     }
-    catch(const std::exception& e) {
-        is_connected_ = false;
-        if (socket_fd_ >= 0) {
-            close(socket_fd_);
-            socket_fd_ = -1;
-        }
-        std::cerr << "CAN connection failed: " << e.what() << std::endl;
-        throw;
-    }
-}
 
     void disconnect()
     {
@@ -210,7 +214,9 @@ void connect(const std::string &can_interface, int32_t bitrate) {
 
         return true;  // 성공적으로 프레임을 읽었을 경우 true 반환
     }
+    
 
+    /*
     void write(uint32_t id, const uint8_t* data, uint8_t len) {
     static constexpr uint8_t MAX_CAN_DATA_LENGTH = 8;
     
@@ -245,7 +251,42 @@ void connect(const std::string &can_interface, int32_t bitrate) {
     data[3] = speed & 0xFF;          // Speed Bit 1-8
     
     write(id, data, 4);
+    }*/
+   
+    void write(uint32_t id, const uint8_t* data, uint8_t len) {
+        // CAN 연결 상태 확인: 연결되지 않았거나 소켓이 유효하지 않으면 예외 발생
+        if (!is_connected_ || socket_fd_ < 0) {
+            throw std::system_error(ENOTCONN, std::generic_category(), "CAN is not connected");
+        }
+
+        // 새로운 MotorCommand 객체 생성
+        MotorCommand cmd;
+        
+        // CAN ID 설정 (Extended Frame Format 플래그 추가)
+        cmd.frame.can_id = id | CAN_EFF_FLAG;
+        
+        // 데이터 길이 설정 (최대 8바이트로 제한)
+        cmd.frame.can_dlc = std::min(len, static_cast<uint8_t>(8));
+        
+        // 현재 시간을 타임스탬프로 기록
+        cmd.timestamp = std::chrono::steady_clock::now();
+        
+        // 모터 ID 추출 (하위 8비트)
+        cmd.motor_id = id & 0xFF;
+        
+        // 데이터가 존재하면 CAN 프레임의 데이터 영역에 복사
+        if (data != nullptr) {
+            std::copy_n(data, cmd.frame.can_dlc, cmd.frame.data);
+        }
+        
+        // 큐에 대한 뮤텍스 락 획득
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        
+        // 명령을 큐에 추가
+        command_queue_.push(cmd);
     }
+
+
 
     void write_set_origin(uint8_t driver_id, bool is_permanent = false) {
         uint32_t control_mode = 5;  // Set Origin Mode
@@ -415,7 +456,6 @@ void connect(const std::string &can_interface, int32_t bitrate) {
                             
                             // 4. 원점 설정
                             write_set_origin(driver_id, true);
-                            write_set_origin(driver_id, true);
                             std::this_thread::sleep_for(std::chrono::milliseconds(1000));
                             write_velocity(driver_id, 0.0f);
 
@@ -448,8 +488,16 @@ private:
     bool has_command_{false};           // 명령 존재 여부
     std::thread read_thread_;          // 읽기 전용 스레드
     std::atomic<bool> read_running_{false};  // 읽기 스레드 제어
-    
+    struct MotorCommand {
+        can_frame frame;
+        std::chrono::steady_clock::time_point timestamp;
+        uint8_t motor_id;
+    };
+
+    std::queue<MotorCommand> command_queue_;
+    std::mutex queue_mutex_;
     // 추가할 private 멤버 함수
+    /*
     void command_loop() {
         while (running_) {
             if (has_command_) {
@@ -460,7 +508,40 @@ private:
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
+    }*/
+    void command_loop() {
+        // running_ 플래그가 true인 동안 계속 실행되는 무한 루프
+        while (running_) {
+            // 명령을 저장할 MotorCommand 구조체 변수 선언
+            MotorCommand cmd;
+            // 명령 존재 여부를 나타내는 플래그 초기화
+            bool has_command = false;
+            
+            {   // 중괄호로 lock의 범위를 최소화
+                // queue_mutex_에 대한 lock 획득 (scope 벗어나면 자동 해제)
+                std::lock_guard<std::mutex> lock(queue_mutex_);
+                // 명령 큐가 비어있지 않다면
+                if (!command_queue_.empty()) {
+                    // 큐의 첫 번째 명령을 cmd에 복사
+                    cmd = command_queue_.front();
+                    // 큐에서 첫 번째 명령 제거
+                    command_queue_.pop();
+                    // 명령 존재 플래그를 true로 설정
+                    has_command = true;
+                }
+            }   // lock 자동 해제
+
+            // 명령이 존재하고 CAN이 연결된 상태라면
+            if (has_command && is_connected_) {
+                // CAN 소켓을 통해 명령 프레임 전송
+                ::write(socket_fd_, &cmd.frame, sizeof(struct can_frame));
+            }
+            // 100마이크로초(0.1밀리초) 대기 - CPU 부하 감소
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
     }
+
+
 
     // 읽기 스레드 함수
     void read_loop() {
