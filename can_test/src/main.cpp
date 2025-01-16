@@ -80,13 +80,7 @@ int main() {
         
         std::cout << "Successfully connected to CAN bus\n";
         
-        // while문 들어가기 전에 딜레이 추가
-        // std::this_thread::sleep_for(std::chrono::seconds(2)); 
-        
-        can_driver.write_velocity(1, 0);
-        std::cout << "회전 !!\n";
-        can_driver.write_velocity(2, 0);
-        /*
+     
         if (can_driver.initialize_motor_origin(1)) {
             std::cout << "1# Motor Origin initialization Sucessful\n";
         } else {
@@ -100,7 +94,9 @@ int main() {
         } else {
             std::cout << "2# Motor Origin initialization failed\n";
             return 1;
-        }*/
+        }
+        
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     
         while(running) { 
             // CAN 프레임 읽기 및 처리

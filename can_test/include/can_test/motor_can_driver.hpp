@@ -263,6 +263,12 @@ public:
         uint8_t data[8] = {0};
         data[0] = is_permanent ? 1 : 0;  // 0: temporary origin, 1: permanent origin
         
+        // 디버깅을 위한 메시지 출력
+        std::cout << "Sending Set Origin command to motor " << static_cast<int>(driver_id) << std::endl;
+        std::cout << "Control Mode: " << control_mode << ", Full ID: 0x" 
+                << std::hex << (id | CAN_EFF_FLAG) << std::dec << std::endl;
+        std::cout << "Data[0]: " << static_cast<int>(data[0]) << " (is_permanent: " << is_permanent << ")" << std::endl;
+         
         write(id, data, 1);  // 1바이트 데이터 전송
     }
 
@@ -332,6 +338,69 @@ public:
     }
 
     bool initialize_motor_origin(uint8_t driver_id) {
+    static constexpr float ORIGIN_SEARCH_SPEED = -100.0f;   // 원점 탐색 속도
+    static constexpr float CURRENT_THRESHOLD = 1.0f;    // 전류 감지 임계값
+    static constexpr auto TIMEOUT_DURATION = std::chrono::seconds(20);  // 최대 대기 시간
+    
+        try {
+            // 1. 초기 정지
+            write_velocity(driver_id, 0.0f);
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+            // 2. 원점 탐색 시작
+            write_velocity(driver_id, ORIGIN_SEARCH_SPEED);
+            std::cout << "원점 탐색 시작\n";
+
+            // 3. 원점 감지 대기
+            auto start_time = std::chrono::steady_clock::now();
+            struct can_frame frame;
+
+            while (std::chrono::steady_clock::now() - start_time < TIMEOUT_DURATION) {
+                if (readCanFrame(frame)) {
+                    uint8_t resp_id = frame.can_id & 0xFF;
+                    if (resp_id == driver_id) {
+
+                        // 위치 값 확인 
+                        int16_t position_raw = (frame.data[0] << 8) | frame.data[1];
+                        float position = position_raw * 0.1f;
+                        // 전류 값 확인
+                        int16_t current_raw = (frame.data[4] << 8) | frame.data[5];
+                        float current = current_raw * 0.01f;
+
+                        std::cout << "Position: " << position << ", Current: " << current << "A\n";
+
+                        if (current > CURRENT_THRESHOLD) {
+                            std::cout << "원점 감지됨: " << current << "A\n";
+                            // 모터 정지
+                            write_velocity(driver_id, 0.0f);
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));                            
+                            // 반작용을 상쇄하기 위한 약한 반대 방향 힘 적용
+                            write_velocity(driver_id, 10.0f);  // 낮은 속도로 반대 방향
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                            // 원점 설정
+                            write_set_origin(driver_id, true);
+                            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                            write_velocity(driver_id, 0.0f);
+                            return true;
+                        }
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+
+            std::cout << "원점 초기화 시간 초과\n";
+            return false;
+
+        } catch (const std::exception& e) {
+            std::cerr << "원점 초기화 실패: " << e.what() << "\n";
+            write_velocity(driver_id, 0.0f);  // 안전을 위해 모터 정지
+            return false;
+        }
+    }
+   
+   
+    /*
+    bool initialize_motor_origin(uint8_t driver_id) {
         // 상수 정의 부분 
         static constexpr uint8_t MIN_MOTOR_ID = 1;  // 최소 모터 ID
         static constexpr uint8_t MAX_MOTOR_ID = 6;  // 최대 모터 ID 
@@ -395,9 +464,13 @@ public:
             // 2. 원점 탐색 시작
             write_velocity(driver_id, ORIGIN_SEARCH_SPEED);
             std::cout << "원점 탐색 시작\n";
+
             // 3. 원점 감지 대기
             auto start_time = std::chrono::steady_clock::now();
             struct can_frame frame;
+            bool origin_detected = false;
+            float detected_current = 0.0f;
+            float detected_position = 0.0f;
             std::cout << "원점 감지 대기\n";
 
             while (std::chrono::steady_clock::now() - start_time < TIMEOUT_DURATION) {
@@ -418,9 +491,8 @@ public:
                         int16_t current_raw = (frame.data[4] << 8) | frame.data[5];
                         float current = current_raw * 0.01f;  // Scale factor 적용
                                
-                        std::cout << "Motor " << driver_id 
-                                << " 위치 값: " << position
-                                << " 전류 값: " << current << "A\n";
+                        std::cout << "Position: " << position << ", Current: " << current << "A\n";
+
 
                         if (current > CURRENT_THRESHOLD) {
                             std::cout << "Origin detected for motor " << driver_id 
@@ -441,7 +513,7 @@ public:
                             
                             // 4. 원점 설정
                             write_set_origin(driver_id, true);
-                            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
                             write_velocity(driver_id, 0.0f);
 
                             guard.release();
@@ -460,7 +532,9 @@ public:
                     << ": " << e.what() << "\n";
             return false;
         }   
-    }
+    }*/
+
+
 private:
     int socket_fd_;
     bool is_connected_;
