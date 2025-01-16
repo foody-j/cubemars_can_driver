@@ -70,7 +70,8 @@ int main() {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         
         can_driver.connect("can0", 1000000);  // 1Mbps 속도로 연결
-        
+        // connect 함수 호출 후 충분한 초기화 시간 부여
+        std::this_thread::sleep_for(std::chrono::seconds(1));
         // 연결 상태 확인
         if (!can_driver.connected()) {
             std::cerr << "Failed to connect to CAN bus\n";
@@ -80,8 +81,11 @@ int main() {
         std::cout << "Successfully connected to CAN bus\n";
         
         // while문 들어가기 전에 딜레이 추가
-        std::this_thread::sleep_for(std::chrono::seconds(2)); 
+        // std::this_thread::sleep_for(std::chrono::seconds(2)); 
         
+        can_driver.write_velocity(1, -100);
+        std::cout << "회전 !!\n";
+        /*
         if (can_driver.initialize_motor_origin(1)) {
             std::cout << "1# Motor Origin initialization Sucessful\n";
         } else {
@@ -95,10 +99,8 @@ int main() {
         } else {
             std::cout << "2# Motor Origin initialization failed\n";
             return 1;
-        }
+        }*/
     
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
         while(running) { 
             // CAN 프레임 읽기 및 처리
             struct can_frame frame;

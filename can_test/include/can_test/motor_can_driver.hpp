@@ -33,10 +33,8 @@ public:
         control_mode_(0),
         running_(false),  // 스레드 실행 플래그 활성화
         read_running_(false)    // 초기에는 false로 설정   
-
     {
         motor_manager_.reset();
-        // 명령 전송 스레드 시작
     } // 생성자에서 초기화
 
 
@@ -65,10 +63,6 @@ public:
         // 복사 생성자와 대입 연산자 삭제 (소켓과 스레드는 복사될 수 없음)
         CanComms(const CanComms&) = delete;
         CanComms& operator=(const CanComms&) = delete;
-
-    
-
-    
 
     void connect(const std::string &can_interface, int32_t bitrate) {
         try {
@@ -215,10 +209,8 @@ public:
         return true;  // 성공적으로 프레임을 읽었을 경우 true 반환
     }
     
-
-    /*
     void write(uint32_t id, const uint8_t* data, uint8_t len) {
-    static constexpr uint8_t MAX_CAN_DATA_LENGTH = 8;
+    static constexpr uint8_t MAX_CAN_DATA_LENGTH = 6;
     
     if (!is_connected_ || socket_fd_ < 0) {
         throw std::system_error(ENOTCONN, std::generic_category(), "CAN is not connected");
@@ -232,7 +224,6 @@ public:
     if (data != nullptr) {
         std::copy_n(data, current_command_.can_dlc, current_command_.data);
     }
-    
     has_command_ = true;
     }
 
@@ -251,41 +242,9 @@ public:
     data[3] = speed & 0xFF;          // Speed Bit 1-8
     
     write(id, data, 4);
-    }*/
+    }
 
-    void write(uint32_t id, const uint8_t* data, uint8_t len) {
-        // CAN 연결 상태 확인
-        if (!is_connected_ || socket_fd_ < 0) {
-            throw std::system_error(ENOTCONN, std::generic_category(), "CAN is not connected");
-        }
-
-        // 모터 ID 추출 (하위 8비트)
-        uint8_t motor_id = id & 0xFF;
-        
-        // motor_id가 유효한지 확인 (1~6 범위)
-        if (motor_id < 1 || motor_id > MAX_MOTORS) {
-            throw std::runtime_error("Invalid motor ID");
-        }
-
-        // 명령 뮤텍스 잠금
-        std::lock_guard<std::mutex> lock(command_mutex_);
-        
-        // 해당 모터의 명령 업데이트
-        motor_commands_[motor_id - 1].frame.can_id = id | CAN_EFF_FLAG;
-        motor_commands_[motor_id - 1].frame.can_dlc = std::min(len, static_cast<uint8_t>(8));
-        motor_commands_[motor_id - 1].motor_id = motor_id;
-        motor_commands_[motor_id - 1].active = true;
-        
-        // 데이터가 존재하면 복사
-        if (data != nullptr) {
-            std::copy_n(data, motor_commands_[motor_id - 1].frame.can_dlc, 
-                    motor_commands_[motor_id - 1].frame.data);
-        }
-    }   
     
-
-
-
     void write_set_origin(uint8_t driver_id, bool is_permanent = false) {
         uint32_t control_mode = 5;  // Set Origin Mode
         uint32_t id = (control_mode << 8) | driver_id;
@@ -481,28 +440,14 @@ private:
     int control_mode_;
     std::thread command_thread_;        // 명령 전송용 스레드
     std::atomic<bool> running_{false};  // 스레드 실행 제어
-    std::mutex command_mutex_;          // 명령 데이터 보호
+    std::mutex command_mutex_;          // 명령 데이터 보호 ,명령 데이터 접근을 위한 뮤텍스 선언
     can_frame current_command_;         // 현재 전송할 명령
     bool has_command_{false};           // 명령 존재 여부
     std::thread read_thread_;          // 읽기 전용 스레드
     std::atomic<bool> read_running_{false};  // 읽기 스레드 제어
-    // 모터 명령을 저장하기 위한 구조체 정의
-    struct MotorCommand {
-        can_frame frame;    // CAN 프레임 데이터 저장
-        uint8_t motor_id;   // 모터 ID 저장
-        bool active;    // 해당 모터 명령의 활성화 상태
-    };
-
     // 최대 지원 모터 수를 6개로 정의하는 상수
     static const int MAX_MOTORS = 6;
-    // 각 모터별 마지막 명령을 저장하는 배열 (크기: MAX_MOTORS)
-    std::array<MotorCommand, MAX_MOTORS> motor_commands_;
-    // 명령 데이터 접근을 위한 뮤텍스 선언
-    std::mutex command_mutex_;
 
-
-    // 추가할 private 멤버 함수
-    /*
     void command_loop() {
         while (running_) {
             if (has_command_) {
@@ -513,30 +458,7 @@ private:
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-    }*/
-
-    // 명령 전송을 위한 루프 함수
-    void command_loop() {
-        // running_ 플래그가 true인 동안 계속 실행
-        while (running_) {
-            // command_mutex_를 이용해 스레드 안전하게 잠금
-            std::lock_guard<std::mutex> lock(command_mutex_);
-            
-            // motor_commands_ 배열의 모든 요소를 순회
-            for (const auto& cmd : motor_commands_) {
-                // 명령이 활성화되어 있고 CAN이 연결된 상태인 경우에만
-                if (cmd.active && is_connected_) {
-                    // CAN 버스로 명령 프레임 전송
-                    ::write(socket_fd_, &cmd.frame, sizeof(struct can_frame));
-                }
-            }
-            
-            // 10밀리초 대기 (CPU 부하 감소)
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
     }
-
-
 
     // 읽기 스레드 함수
     void read_loop() {
