@@ -3,13 +3,14 @@
     * OS: Ubuntu 24.04
     * 언어: C++
 
-이 프로젝트는 USB to CAN 디바이스를 사용하여 CAN 버스 네트워크의 노드와 통신할 수 있는 인터페이스 제공한다. 이 코드의 주요 목적은 모터와 같은 CAN 기반 장치와의 안정적인 통신을 지원하는 것이다.
-주요 기능으로는 CAN 데이터 프레임의 읽기 및 쓰기 메서드 제공, 모터 제어를 위한 커스텀 메서드 포함, 기본 소켓 ID는 can0이며, 비트레이트는 1 Mbps로 설정하였다.
-소스코드는 https://github.com/foody-j/sfbot_project 기반으로 작성되었다.
+이 프로젝트는 USB to CAN 디바이스를 사용하여 CAN 버스 네트워크의 노드와 통신할 수 있는 인터페이스 제공한다.  
+이 코드의 주요 목적은 모터와 같은 CAN 기반 장치와의 안정적인 통신을 지원하는 것이다.  
+주요 기능으로는 CAN 데이터 프레임의 읽기 및 쓰기 메서드 제공, 모터 제어를 위한 커스텀 메서드 포함, 기본 소켓 ID는 can0이며, 비트레이트는 1 Mbps로 설정하였다.  
+소스코드는 https://github.com/foody-j/sfbot_project 기반으로 작성되었다.  
 
 
-헤더파일은 2가지가 사용된다.
-motor_can_driver.hpp 과 `motor_data.hpp`
+헤더파일은 2가지가 사용된다.  
+motor_can_driver.hpp 과 `motor_data.hpp`  
 
 
 # `motor_can_driver.hpp` 주요 기능
