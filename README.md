@@ -30,7 +30,6 @@ motor_can_driver.hpp 과 `motor_data.hpp`
 
     * MotorData 구조체
 
-    ```cpp
     struct MotorData {
     float position{0.0f};    // -3200° ~ +3200°
     float speed{0.0f};       // -32000 ~ +32000 rpm
@@ -38,11 +37,11 @@ motor_can_driver.hpp 과 `motor_data.hpp`
     int8_t temperature{0};   // -20°C ~ 127°C
     uint8_t error{0};        // 0~7 error codes
     };
-    ```
+
 
     * MotorDataManager 클래스
 
-    ```cpp
+
     class MotorDataManager {
     public:
         static constexpr size_t MAX_MOTORS = 6;
@@ -64,13 +63,11 @@ motor_can_driver.hpp 과 `motor_data.hpp`
     private:
         std::array<MotorData, MAX_MOTORS> motor_data_;
     };
-    ```
+
     * 데이터 접근 및 수정
-    ```cpp
     MotorData& getMotorData(uint8_t motor_id)
     void updateMotorData(uint8_t motor_id, const MotorData& data)
     void reset()
-    ```
 
     * 안전성
         * 모든 멤버 변수는 기본값으로 초기화됨
