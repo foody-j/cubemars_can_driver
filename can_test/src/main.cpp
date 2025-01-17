@@ -80,6 +80,7 @@ int main() {
         
         std::cout << "Successfully connected to CAN bus\n";
         
+        /*
         
         if (can_driver.initialize_motor_origin(1)) {
             std::cout << "1# Motor Origin initialization Sucessful\n";
@@ -100,10 +101,12 @@ int main() {
         // can_driver.write_velocity(2, 100);
         std::this_thread::sleep_for(std::chrono::seconds(2));
         can_driver.write_position_velocity(2, 90, 400, 100);
-
+        */
         std::this_thread::sleep_for(std::chrono::seconds(1));
     
         while(running) { 
+            
+            /*
             // CAN 프레임 읽기 및 처리
             struct can_frame frame;
             if (can_driver.readCanFrame(frame)) {
@@ -121,9 +124,22 @@ int main() {
                             << "Temperature: " << (int)motor_data.temperature << "°C "
                             << "Error: 0x" << std::hex << (int)motor_data.error 
                             << std::dec << std::endl;
+            }*/
+            for (uint8_t i = 1; i < 3; i++)  // 모터 1번과 2번의 데이터를 가져옴
+            {
+                MotorData motor_data = can_driver.getMotorData(i);
+                std::cout << "Motor " << i << ": "  // motor_id 대신 i를 사용해야 합니다
+                    << "Position: " << motor_data.position << "° "
+                    << "Speed: " << motor_data.speed << " RPM "
+                    << "Current: " << motor_data.current << "A "
+                    << "Temperature: " << (int)motor_data.temperature << "°C "
+                    << "Error: 0x" << std::hex << (int)motor_data.error 
+                    << std::dec << std::endl;
             }
+            
 
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         // 안전한 종료 처리
         std::cout << "\nStopping motor...\n";
