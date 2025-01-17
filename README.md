@@ -29,7 +29,7 @@ motor_can_driver.hpp 과 `motor_data.hpp`
 
 # `motor_data.hpp`
 
-    * MotorData 구조체
+    * MotorData 구조체  
 
     struct MotorData {
     float position{0.0f};    // -3200° ~ +3200°
@@ -40,7 +40,7 @@ motor_can_driver.hpp 과 `motor_data.hpp`
     };
 
 
-    * MotorDataManager 클래스
+    * MotorDataManager 클래스  
 
 
     class MotorDataManager {
@@ -65,12 +65,12 @@ motor_can_driver.hpp 과 `motor_data.hpp`
         std::array<MotorData, MAX_MOTORS> motor_data_;
     };
 
-    * 데이터 접근 및 수정
+    * 데이터 접근 및 수정  
     MotorData& getMotorData(uint8_t motor_id)
     void updateMotorData(uint8_t motor_id, const MotorData& data)
     void reset()
 
-    * 안전성
+    * 안전성  
         * 모든 멤버 변수는 기본값으로 초기화됨
         * 유효하지 않은 모터 ID 접근 시 예외 발생
         * 최대 6개의 모터 데이터 관리 가능
