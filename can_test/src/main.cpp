@@ -136,14 +136,16 @@ int main() {
                     << "Temperature: " << (int)motor_data.temperature << "°C "
                     << "Error: 0x" << std::hex << (int)motor_data.error 
                     << std::dec << std::endl;*/
+                
                 std::cout << std::dec;  // 10진수 모드로 명시적 설정
-                std::cout << "Motor " << static_cast<int>(i) << ": "
+                std::cout << "Motor " << static_cast<int>(motor_data.motor_id) << ": "
                     << "Position: " << motor_data.position << "° "
                     << "Speed: " << motor_data.speed << " RPM "
                     << "Current: " << motor_data.current << "A "
                     << "Temperature: " << static_cast<int>(motor_data.temperature) << "°C "
                     << "Error: 0x" << std::hex << static_cast<int>(motor_data.error) 
                     << std::dec << std::endl;
+
             }
             
 
