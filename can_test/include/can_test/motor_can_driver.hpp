@@ -721,7 +721,7 @@ private:
                 uint8_t resp_id = frame.can_id & 0xFF;
                 if (resp_id >= 1 && resp_id <= MotorDataManager::MAX_MOTORS) {
                     MotorData data;
-                    
+                    data.motor_id = resp_id;
                     // 위치 데이터 추출 (data[0-1])
                     int16_t position_raw = (frame.data[0] << 8) | frame.data[1];
                     data.position = position_raw * 0.1f;  // Scale factor 적용
