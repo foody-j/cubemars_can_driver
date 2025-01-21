@@ -161,7 +161,7 @@ public:
     }
     
     // 소켓 상태 확인을 위한 구조체
-    struct can_frame frame;
+    // struct can_frame frame;
     struct timeval timeout = {0, 0};  // 즉시 반환
     fd_set read_set;
     FD_ZERO(&read_set);
