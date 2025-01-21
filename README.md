@@ -9,6 +9,34 @@
 소스코드는 https://github.com/foody-j/sfbot_project 기반으로 작성되었다.  
 
 
+# 변경 사항
+    2025.01.21  
+    motor_data.hpp에서 motor id 및 모터 상태 데이터 접근 함수 추가  
+    ```
+    float getMotorPosition(uint8_t motor_id) {
+        return getMotorData(motor_id).position;
+    }
+
+    float getMotorSpeed(uint8_t motor_id) {
+        return getMotorData(motor_id).speed;
+    }
+
+    float getMotorCurrent(uint8_t motor_id) {
+        return getMotorData(motor_id).current;
+    }
+
+    int8_t getMotorTemperature(uint8_t motor_id) {
+        return getMotorData(motor_id).temperature;
+    }
+
+    uint8_t getMotorError(uint8_t motor_id) {
+        return getMotorData(motor_id).error;
+    }
+    ```
+    사용 방법  
+    `float position = motor_manager.getMotorPosition(1);`
+
+
 헤더파일은 2가지가 사용된다.  
 motor_can_driver.hpp 과 `motor_data.hpp`  
 
@@ -93,7 +121,4 @@ motor_can_driver.hpp 과 `motor_data.hpp`
     * 원점 감지 시 즉시 모터 정지
     * 50 RPM의 낮은 속도로 반대 방향 회전하여 충격 완화
     * 충분한 안정화 시간(500ms) 확보
-
-
-
 

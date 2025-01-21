@@ -40,6 +40,26 @@ public:
         }
     }
 
+    // 편의 함수 추가
+    float getMotorPosition(uint8_t motor_id) {
+        return getMotorData(motor_id).position;
+    }
+
+    float getMotorSpeed(uint8_t motor_id) {
+        return getMotorData(motor_id).speed;
+    }
+
+    float getMotorCurrent(uint8_t motor_id) {
+        return getMotorData(motor_id).current;
+    }
+
+    int8_t getMotorTemperature(uint8_t motor_id) {
+        return getMotorData(motor_id).temperature;
+    }
+
+    uint8_t getMotorError(uint8_t motor_id) {
+        return getMotorData(motor_id).error;
+    }
 private:
     std::array<MotorData, MAX_MOTORS> motor_data_;
 };
