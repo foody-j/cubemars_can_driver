@@ -1,4 +1,3 @@
-//motor_data.hpp
 #ifndef MOTOR_DATA_HPP
 #define MOTOR_DATA_HPP
 
@@ -6,6 +5,7 @@
 #include <cstdint>
 
 struct MotorData {
+    uint8_t motor_id{0};     // 모터 ID (1~6)
     float position{0.0f};    // -3200° ~ +3200°
     float speed{0.0f};       // -32000 ~ +32000 rpm
     float current{0.0f};     // -60A ~ +60A
@@ -17,10 +17,11 @@ class MotorDataManager {
 public:
     static constexpr size_t MAX_MOTORS = 6;
     
-    MotorData& getMotorData(uint8_t motor_id) { //
+    MotorData& getMotorData(uint8_t motor_id) {
         if (motor_id < 1 || motor_id > MAX_MOTORS) {
             throw std::runtime_error("Invalid motor ID");
         }
+        motor_data_[motor_id - 1].motor_id = motor_id; // ID 자동 설정
         return motor_data_[motor_id - 1];
     }
 
@@ -29,10 +30,14 @@ public:
             throw std::runtime_error("Invalid motor ID");
         }
         motor_data_[motor_id - 1] = data;
+        motor_data_[motor_id - 1].motor_id = motor_id; // ID 보장
     }
 
     void reset() {
-        motor_data_.fill(MotorData{});
+        for (uint8_t i = 0; i < MAX_MOTORS; ++i) {
+            motor_data_[i] = MotorData{};
+            motor_data_[i].motor_id = i + 1; // 리셋 시에도 ID 유지
+        }
     }
 
 private:
