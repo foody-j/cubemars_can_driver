@@ -80,7 +80,7 @@ int main() {
         
         std::cout << "Successfully connected to CAN bus\n";
         
-        /*
+        
         
         if (can_driver.initialize_motor_origin(1)) {
             std::cout << "1# Motor Origin initialization Sucessful\n";
@@ -97,13 +97,15 @@ int main() {
             return 1;
         }
         
-        can_driver.write_velocity(1, 0);
+        can_driver.write_velocity(1, 500);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        can_driver.write_velocity(2, 500);
         // can_driver.write_velocity(2, 100);
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-        can_driver.write_position_velocity(2, 90, 400, 100);
-        */
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    
+        // std::this_thread::sleep_for(std::chrono::seconds(1));
+        // can_driver.write_position_velocity(1, 90, 400, 100);
+        // std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // can_driver.write_position_velocity(2, 90, 400, 100);
+
         while(running) { 
             
             /*
