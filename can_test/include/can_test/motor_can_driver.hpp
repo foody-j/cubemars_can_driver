@@ -23,6 +23,7 @@
 #include <atomic>
 //#include <queue>   // std::queue를 위한 헤더
 
+
 class CanComms
 {
 public:
@@ -39,6 +40,7 @@ public:
 
     // 소멸자 추가
      ~CanComms() {
+
         // 스레드 종료 플래그 설정
         running_ = false;
         read_running_ = false;
