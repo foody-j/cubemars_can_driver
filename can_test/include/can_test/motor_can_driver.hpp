@@ -481,17 +481,8 @@ public:
 
 
         std::cout << "Starting origin initialization for motor " << driver_id << "\n";
-        // 안전을 위한 cleanup guard 설정
-        ScopeGuard guard([this, driver_id]() {
-            try {
-                write_velocity(driver_id, 0.0f);
-            } catch (...) {
-                std::cout << "Error: Failed to stop motor {} during cleanup" << driver_id << "\n";
-            }
-        });
+        // 안전을 위한 cleanup guard 설정Cannot find device "can1"
 
-        try {
-            // 1. 원점 설정 모드 활성화
             write_set_origin(driver_id, false);
             std::this_thread::sleep_for(COMMAND_DELAY);
 
