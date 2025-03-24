@@ -319,10 +319,12 @@ private:
         std::chrono::steady_clock::time_point last_sent;
         bool active;
         CommandType command_type;
+        bool try_all_interfaces; // 모든 인터페이스에 명령 시도
         
         MotorCommand() : motor_id(0), value(0), position(0), velocity(0), 
                         acceleration(0), active(false), 
-                        command_type(CommandType::VELOCITY) {}
+                        command_type(CommandType::VELOCITY),
+                        try_all_interfaces(true) {} // 기본적으로 true로 설정 {}
     };
 
     std::array<MotorCommand, MAX_MOTORS> motor_commands_;
@@ -466,6 +468,7 @@ private:
         } else {
             return 2;  // CAN2: 모터 5,6
         }*/
+       return -1;  // 아직 매핑되지 않음
     }
 
     // CAN 읽기 루프 (각 인터페이스별)
@@ -513,7 +516,6 @@ private:
         }
     }
 
-    // 명령 루프 함수
     void command_loop() {
         static constexpr auto UPDATE_INTERVAL = std::chrono::milliseconds(10);
         
@@ -530,57 +532,70 @@ private:
                     if (current_time - cmd.last_sent >= UPDATE_INTERVAL) {
                         // 해당 모터가 매핑된 CAN 인터페이스 찾기
                         int can_idx = get_can_index_for_motor(cmd.motor_id);
-                        if (can_idx >= 0 && can_idx <MAX_CAN_INTERFACES && 
+                        
+                        // 명령 타입에 따라 CAN 프레임 생성 (미리 생성)
+                        struct can_frame frame{};
+                        
+                        if (cmd.command_type == CommandType::VELOCITY) {
+                            uint32_t control_mode = 3;  // Velocity Mode
+                            uint32_t id = (control_mode << 8) | cmd.motor_id;
+                            
+                            int32_t speed = static_cast<int32_t>(cmd.value);
+                            
+                            frame.can_id = id | CAN_EFF_FLAG;
+                            frame.can_dlc = 4;
+                            frame.data[0] = (speed >> 24) & 0xFF;
+                            frame.data[1] = (speed >> 16) & 0xFF;
+                            frame.data[2] = (speed >> 8) & 0xFF;
+                            frame.data[3] = speed & 0xFF;
+                            
+                        } else if (cmd.command_type == CommandType::POSITION_VELOCITY) {
+                            uint32_t control_mode = 6;  // Position-Velocity Mode
+                            uint32_t id = (control_mode << 8) | cmd.motor_id;
+                            
+                            int32_t pos = static_cast<int32_t>(cmd.position * 10000.0f);
+                            int16_t speed = static_cast<int16_t>(cmd.velocity);
+                            int16_t acc = static_cast<int16_t>(cmd.acceleration / 10.0f);
+                            
+                            frame.can_id = id | CAN_EFF_FLAG;
+                            frame.can_dlc = 8;
+                            frame.data[0] = (pos >> 24) & 0xFF;
+                            frame.data[1] = (pos >> 16) & 0xFF;
+                            frame.data[2] = (pos >> 8) & 0xFF;
+                            frame.data[3] = pos & 0xFF;
+                            frame.data[4] = (speed >> 8) & 0xFF;
+                            frame.data[5] = speed & 0xFF;
+                            frame.data[6] = (acc >> 8) & 0xFF;
+                            frame.data[7] = acc & 0xFF;
+                            
+                        } else if (cmd.command_type == CommandType::SET_ORIGIN) {
+                            uint32_t control_mode = 5;  // Set Origin Mode
+                            uint32_t id = (control_mode <<8) | cmd.motor_id;
+                            
+                            frame.can_id = id | CAN_EFF_FLAG;
+                            frame.can_dlc = 1;
+                            frame.data[0] = cmd.is_permanent ? 1 : 0;
+                        }
+                        
+                        // 매핑된 인터페이스가 있으면 해당 인터페이스로만 전송
+                        if (can_idx >= 0 && can_idx < MAX_CAN_INTERFACES && 
                             can_interfaces_[can_idx].is_connected) {
-                            
-                            // 명령 타입에 따라 적절한 CAN 메시지 생성
-                            struct can_frame frame{};
-                            
-                            if (cmd.command_type == CommandType::VELOCITY) {
-                                uint32_t control_mode = 3;  // Velocity Mode
-                                uint32_t id = (control_mode << 8) | cmd.motor_id;
-                                
-                                int32_t speed = static_cast<int32_t>(cmd.value);
-                                
-                                frame.can_id = id | CAN_EFF_FLAG;
-                                frame.can_dlc = 4;
-                                frame.data[0] = (speed >> 24) & 0xFF;
-                                frame.data[1] = (speed >> 16) & 0xFF;
-                                frame.data[2] = (speed >> 8) & 0xFF;
-                                frame.data[3] = speed & 0xFF;
-                                
-                            } else if (cmd.command_type == CommandType::POSITION_VELOCITY) {
-                                uint32_t control_mode = 6;  // Position-Velocity Mode
-                                uint32_t id = (control_mode << 8) | cmd.motor_id;
-                                
-                                int32_t pos = static_cast<int32_t>(cmd.position * 10000.0f);
-                                int16_t speed = static_cast<int16_t>(cmd.velocity);
-                                int16_t acc = static_cast<int16_t>(cmd.acceleration / 10.0f);
-                                
-                                frame.can_id = id | CAN_EFF_FLAG;
-                                frame.can_dlc = 8;
-                                frame.data[0] = (pos >> 24) & 0xFF;
-                                frame.data[1] = (pos >> 16) & 0xFF;
-                                frame.data[2] = (pos >> 8) & 0xFF;
-                                frame.data[3] = pos & 0xFF;
-                                frame.data[4] = (speed >> 8) & 0xFF;
-                                frame.data[5] = speed & 0xFF;
-                                frame.data[6] = (acc >> 8) & 0xFF;
-                                frame.data[7] = acc & 0xFF;
-                                
-                            } else if (cmd.command_type == CommandType::SET_ORIGIN) {
-                                uint32_t control_mode = 5;  // Set Origin Mode
-                                uint32_t id = (control_mode <<8) | cmd.motor_id;
-                                
-                                frame.can_id = id | CAN_EFF_FLAG;
-                                frame.can_dlc = 1;
-                                frame.data[0] = cmd.is_permanent ? 1 : 0;
-                            }
                             
                             // CAN 메시지 전송
                             write(can_interfaces_[can_idx].socket_fd, &frame, sizeof(struct can_frame));
-                            cmd.last_sent = current_time;
+                            cmd.try_all_interfaces = false; // 매핑된 후에는 더 이상 모든 인터페이스로 전송하지 않음
                         }
+                        // 매핑되지 않았으면 모든 연결된 인터페이스로 전송
+                        else if (cmd.try_all_interfaces) {
+                            for (int j = 0; j < MAX_CAN_INTERFACES; j++) {
+                                if (can_interfaces_[j].is_connected) {
+                                    // CAN 메시지 전송
+                                    write(can_interfaces_[j].socket_fd, &frame, sizeof(struct can_frame));
+                                }
+                            }
+                        }
+                        
+                        cmd.last_sent = current_time;
                     }
                 }
             }
