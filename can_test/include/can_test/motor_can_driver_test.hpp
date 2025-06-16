@@ -348,7 +348,7 @@ private:
                 throw std::runtime_error("Failed to set CAN bitrate");
             }
 
-            // 3. CAN 인터페이스를 올린다
+            // 3. CAN 인터페이스를 올린다이렇게 하면 모터가 아직 매핑되지 않았더라도 명령을 받을 수 있고, 응답하면 자동으로 매핑이 설정되어 이후에는 해당 인터페이스로만 통신하게 됩니다.
             ss.str("");
             ss << "sudo ip link set " << can_name <<" up";
             result = std::system(ss.str().c_str());
@@ -604,5 +604,4 @@ private:
         }
     }
 };
-
 #endif // MOTOR_CAN_DRIVER_HPP
