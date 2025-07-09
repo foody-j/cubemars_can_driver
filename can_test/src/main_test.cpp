@@ -1,4 +1,4 @@
-#include "can_test/motor_can_driver_test.hpp"
+#include "can_test/motor_can_driver.hpp"
 #include <thread>
 #include <chrono>
 #include <signal.h>
@@ -31,14 +31,18 @@ int main() {
         
         std::cout << "CAN 버스 연결 성공\n";
         std::cout << "모터 데이터 모니터링 시작...\n\n";
-        float target_speed = 500.0f;  // 목표 속도 (RPM)
+        float target_speed = 10.0f;  // 목표 속도 (RPM)
         // 메인 모니터링 루프
         while(running) {
             std::cout << "\033[2J\033[H";  // 화면 클리어
             std::cout << "=== 모터 상태 모니터링 ===\n";
             can_driver.write_velocity(1, target_speed);
             can_driver.write_velocity(2, target_speed);
+            can_driver.write_velocity(3, target_speed);
+            can_driver.write_velocity(4, target_speed);
+            can_driver.write_velocity(5, target_speed);
             can_driver.write_velocity(6, target_speed);
+
             // 모터 1~6번 데이터 조회
             for (uint8_t i = 1; i <= 6; i++) {
                 try {
