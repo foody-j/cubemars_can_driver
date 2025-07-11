@@ -72,9 +72,9 @@ namespace CubeMars {
             return result;
         }
         
-        // 가속도: ERPM/s → 프로토콜 값
-        inline int16_t acceleration_to_protocol(float erpm_per_s) {
-            int16_t result = static_cast<int16_t>(erpm_per_s / 10.0f);
+        // ✅ 올바른 파라미터명
+        inline int16_t acceleration_to_protocol(float erpm_per_s2) {  // erpm_per_s2는 가속도!
+            int16_t result = static_cast<int16_t>(erpm_per_s2 / 10.0f);
             // 범위 제한 (가속도는 양수만)
             if (result > 32767) result = 32767;
             if (result < 0) result = 0;
@@ -146,8 +146,8 @@ namespace CubeMars {
 #define CUBEMARS_CONVERT_POSITION_VELOCITY(output_rpm, motor_id) \
     CubeMars::Protocol::velocity_to_protocol_int16(CubeMars::output_rpm_to_erpm(output_rpm, CubeMars::get_motor_model_by_id(motor_id)))
 
-#define CUBEMARS_CONVERT_ACCELERATION(output_rpm_per_s, motor_id) \
-    CubeMars::Protocol::acceleration_to_protocol(CubeMars::output_rpm_to_erpm(output_rpm_per_s, CubeMars::get_motor_model_by_id(motor_id)))
+#define CUBEMARS_CONVERT_ACCELERATION(output_rpm_per_s2, motor_id) \
+    CubeMars::Protocol::acceleration_to_protocol(CubeMars::output_rpm_to_erpm(output_rpm_per_s2, CubeMars::get_motor_model_by_id(motor_id)))
 
 #define CUBEMARS_CONVERT_RECEIVED_VELOCITY(protocol_value, motor_id) \
     CubeMars::Protocol::protocol_int16_to_velocity(protocol_value, CubeMars::get_motor_model_by_id(motor_id))    
