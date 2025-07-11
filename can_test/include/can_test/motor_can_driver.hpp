@@ -210,30 +210,30 @@ public:
         return motor_manager_;
     }
 
-    // 원점 초기화 함수
-    bool initialize_motor_origin(uint8_t driver_id) {
-        static constexpr float ORIGIN_SEARCH_SPEED = -100.0f;
-        static constexpr float CURRENT_THRESHOLD = 1.0f;
-        static constexpr auto TIMEOUT_DURATION = std::chrono::seconds(20);
+    // 원점 초기화 함수 - 임계 토크 파라미터화
+    bool initialize_motor_origin(uint8_t driver_id, float current_threshold = 0.4f,
+                                 float search_speed = -2.0f, int timeout_seconds = 5) {
+        static auto TIMEOUT_DURATION = std::chrono::seconds(timeout_seconds);
 
         if (driver_id < 1 || driver_id > MAX_MOTORS) {
             throw std::runtime_error("Invalid motor ID");
         }
-
         // 모터가 매핑된 CAN 인터페이스 확인
         int can_idx = get_can_index_for_motor(driver_id);
         if (can_idx < 0) {
             throw std::runtime_error("Motor not mapped to any CAN interface");
         }
-        
+
         try {
+            std::cout << "원점 탐색 시작 (모터 " << static_cast<int>(driver_id)
+                      << ", 임계 전류: " << current_threshold << "A(\n";
+
             // 1. 초기 정지
             write_velocity(driver_id, 0.0f);
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
             // 2. 원점 탐색 시작
-            write_velocity(driver_id, ORIGIN_SEARCH_SPEED);
-            std::cout << "원점 탐색 시작 (모터 " << static_cast<int>(driver_id) <<")\n";
+            write_velocity(driver_id, search_speed);
 
             // 3. 원점 감지 대기
             auto start_time = std::chrono::steady_clock::now();
@@ -252,26 +252,11 @@ public:
 
                         std::cout << "Position: " << position <<", Current: " <<current << "A\n";
 
-                        if (current > CURRENT_THRESHOLD) {
+                        if (current > current_threshold) {
                             std::cout << "원점 감지됨: " << current << "A\n";
-
-                            // 1. 즉시 모터 정지
+                            write_set_origin(driver_id, false);
                             write_velocity(driver_id, 0.0f);
-                            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                            
-                            // 2. 반대 방향으로 살짝 이동 (기계적 스트레스 해소)
-                            write_velocity(driver_id, 50.0f);
-                            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                            
-                            // 3. 다시 정지
-                            write_velocity(driver_id, 0.0f);
-                            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                            
-                            // 4. 원점 설정
-                            write_set_origin(driver_id, true);
                             std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                            
-                            write_velocity(driver_id, 0.0f);
                             return true;
                         }
                     }
