@@ -51,7 +51,7 @@ int main() {
         // can_driver.write_duty_cycle(4, -0.045f);
         // can_driver.write_duty_cycle(5, 0.05f);
         
-        can_driver.initialize_motor_origin_duty_cycle(4, -0.04f, 5.0f, 20);
+        can_driver.initialize_motor_origin_duty_cycle(5, -0.04f, 5.0f, 20);
 
 
 

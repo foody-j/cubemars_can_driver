@@ -416,7 +416,7 @@ private:
         try {
             // 1. CAN 인터페이스를 내린다
             std::stringstream ss;
-            ss << "sudo ip link set " << can_name <<" down";
+            ss << "ip link set " << can_name <<" down";
             int result = std::system(ss.str().c_str());
             if (result <0) {
                 throw std::runtime_error("Failed to set CAN interface down");
@@ -424,7 +424,7 @@ private:
 
             // 2. bitrate 설정
             ss.str("");
-            ss << "sudo ip link set " << can_name <<" type can bitrate " << bitrate;
+            ss << "ip link set " << can_name <<" type can bitrate " << bitrate;
             result = std::system(ss.str().c_str());
             if (result < 0) {
                 throw std::runtime_error("Failed to set CAN bitrate");
@@ -432,7 +432,7 @@ private:
 
             // 3. CAN 인터페이스를 올린다이렇게 하면 모터가 아직 매핑되지 않았더라도 명령을 받을 수 있고, 응답하면 자동으로 매핑이 설정되어 이후에는 해당 인터페이스로만 통신하게 됩니다.
             ss.str("");
-            ss << "sudo ip link set " << can_name <<" up";
+            ss << "ip link set " << can_name <<" up";
             result = std::system(ss.str().c_str());
             if (result <0) {
                 throw std::runtime_error("Failed to set CAN interface up");
@@ -497,7 +497,7 @@ private:
             
             // 인터페이스 다운
             std::stringstream ss;
-            ss << "sudo ip link set " <<interface.name << " down";
+            ss << "ip link set " <<interface.name << " down";
             std::system(ss.str().c_str());
             
             interface.is_connected = false;
