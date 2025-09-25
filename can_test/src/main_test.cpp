@@ -31,31 +31,25 @@ int main() {
         
         std::cout << "CAN 버스 연결 성공\n";
         std::cout << "모터 데이터 모니터링 시작...\n\n";
-
-        
-        float target_speed = 1.0f;  // 목표 속도 (RPM)
-
-        float start_current = 0.1f;  // 시작 전류 (A)
-        float target_current = 0.55f; // 목표 전류 (A)
-        float step = 0.05f;          // 증가 단계 (A)
-        int delay_ms = 500;           // 각 단계별 지연 시간 (ms)
-
-        std::cout << "Duty cycle 테스트 시작...\n";
-        std::cout << "3초 후 시작\n";
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        std::cout << "2초 후 시작\n";
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        std::cout << "1초 후 시작\n";
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        // can_driver.write_duty_cycle(1, -0.08f);
-        // can_driver.write_duty_cycle(4, -0.045f);
-        // can_driver.write_duty_cycle(5, 0.05f);
-        
-        can_driver.initialize_motor_origin_duty_cycle(5, -0.04f, 5.0f, 20);
-
-
-
         std::this_thread::sleep_for(std::chrono::seconds(3));
+
+        for (int i = 1; i <= 6; i++) {
+            can_driver.write_set_origin(i, false);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));  // 갱신 주기
+            std::cout << i<< " 번 모터"<<"원점 커맨드 명령 전송\n";
+
+        }
+        std::cout << "Set origin 명령 전송 완료\n";            
+
+        // 각 모터 브레이크 Current 테스트 하기.
+        // can_driver.write_brake_current(3, 0.1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        can_driver.write_brake_current(4, 1.0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        can_driver.write_brake_current(5, 3);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // can_driver.write_brake_current(6, 0.1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));  // 갱신 주기
 
         /*
         for (int i = 1; i <= 6; i++) {
@@ -77,8 +71,6 @@ int main() {
         while(running) {
             std::cout << "\033[2J\033[H";  // 화면 클리어
             std::cout << "=== 모터 상태 모니터링 ===\n";            
-            can_driver.write_duty_cycle(4, 0.0f);
-
             // 모터 1~6번 데이터 조회
             for (uint8_t i = 1; i <= 6; i++) {
                 try {

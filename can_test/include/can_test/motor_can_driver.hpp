@@ -550,7 +550,7 @@ private:
         uint8_t motor_id;
         float duty;  // duty_cycle mode에서 사용
         float current; // current mode에서 사용
-        float brake_current // brake_current mode에서 사용
+        float brake_current; // brake_current mode에서 사용
         float value;  // velocity mode에서 사용
         float position;  // position-velocity mode에서 사용
         float velocity;  // position-velocity mode에서 사용
